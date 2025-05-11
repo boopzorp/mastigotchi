@@ -116,7 +116,7 @@ export default function PocketPalPage() {
       setIsNamingPet(false);
       setIsPetDataLoading(false);
     }
-  }, [user, authLoading]); // Removed toast from dependencies
+  }, [user, authLoading, toast]); // Removed toast from dependencies
 
 
   const saveSinglePetData = useCallback(async (petId: string, dataToUpdate: Partial<FirestorePetData>) => {
@@ -167,12 +167,17 @@ export default function PocketPalPage() {
       currentImageSet = images.content;
       message = `${currentActivePet.petName} is feeling great! Thanks to you!`;
     } else {
+      // If not extremely happy, but still generally good, use happy.
+      // If default/neutral is better, this logic can be expanded.
+      // For now, happy is a good general state if no strong negative or positive.
       currentImageSet = images.happy; 
     }
     
     setPetImage(currentImageSet.url);
     setPetImageHint(currentImageSet.hint);
 
+    // Only update the message if AI is not currently loading/thinking
+    // to avoid overwriting AI's message.
     if (!isLoadingAi) {
         setPetMessage(message);
     }
@@ -182,6 +187,7 @@ export default function PocketPalPage() {
     updatePetVisualsAndMessage();
   }, [currentActivePet, currentPetDefinition, updatePetVisualsAndMessage]);
 
+  // Effect for periodic stat decrease
   useEffect(() => {
     if (!user || !currentActivePet || showPetSelectionScreen || isNamingPet) return;
 
@@ -190,12 +196,15 @@ export default function PocketPalPage() {
         prevPets.map(p => {
           if (p.id !== activePetId) return p;
 
-          const newHunger = Math.max(0, p.hunger - Math.floor(Math.random() * 3 + 1));
-          const newCleanliness = Math.max(0, p.cleanliness - Math.floor(Math.random() * 2 + 1));
+          // Decrease stats randomly but ensure they don't go below 0
+          const newHunger = Math.max(0, p.hunger - Math.floor(Math.random() * 3 + 1)); // Hunger decreases
+          const newCleanliness = Math.max(0, p.cleanliness - Math.floor(Math.random() * 2 + 1)); // Cleanliness decreases
+          
           let newHappiness = p.happiness;
+          // Happiness decreases if other stats are low, or slightly over time
           if (newHunger < 40) newHappiness -= 1;
           if (newCleanliness < 40) newHappiness -=1;
-          if (newHappiness === p.happiness && p.happiness > 0) newHappiness -=1;
+          if (newHappiness === p.happiness && p.happiness > 0) newHappiness -=1; // General decrease if no other factors
           
           const updatedPet = {
             ...p,
@@ -204,6 +213,7 @@ export default function PocketPalPage() {
             happiness: Math.max(0, newHappiness),
           };
           
+          // Save updated stats to Firestore
           saveSinglePetData(p.id, { 
             hunger: updatedPet.hunger, 
             cleanliness: updatedPet.cleanliness, 
@@ -218,6 +228,10 @@ export default function PocketPalPage() {
 
   const callPetNeedsAI = useCallback(async () => {
     if (!currentActivePet || isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
+      // Optional: Toast to inform user about cooldown
+      // if (Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
+      //   toast({ description: `Please wait a bit before asking ${currentPetDisplayName} again.`});
+      // }
       return;
     }
     setIsLoadingAi(true);
@@ -228,9 +242,9 @@ export default function PocketPalPage() {
         happiness: currentActivePet.happiness, 
         cleanliness: currentActivePet.cleanliness 
       };
-      setPetMessage("Thinking about what I need..."); 
+      setPetMessage("Thinking about what I need..."); // Temporary message while AI loads
       const result = await petNeedsAssessment(assessmentInput);
-      setPetMessage(result.needs);
+      setPetMessage(result.needs); // Update pet message with AI's response
       toast({
         title: `${currentPetDisplayName} Says:`,
         description: result.needs,
@@ -249,8 +263,10 @@ export default function PocketPalPage() {
     }
   }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, toast, currentPetDisplayName]);
   
+  // Effect for AI to automatically trigger if pet stats are low
   useEffect(() => {
     if (!user || !currentActivePet || isLoadingAi || showPetSelectionScreen || isNamingPet) return;
+    // Trigger AI if any stat is critically low and cooldown has passed
     if ((currentActivePet.hunger < 25 || currentActivePet.happiness < 25 || currentActivePet.cleanliness < 25) && (Date.now() - lastAiCallTimestamp > AI_COOLDOWN)) {
       callPetNeedsAI();
     }
@@ -263,6 +279,7 @@ export default function PocketPalPage() {
       prevPets.map(p => {
         if (p.id !== activePetId) return p;
         const changes = statUpdater(p);
+        // Ensure stats are within 0-100 bounds
         const updatedPetData = {
           ...p,
           ...changes,
@@ -270,6 +287,7 @@ export default function PocketPalPage() {
           happiness: Math.min(100, Math.max(0, changes.happiness ?? p.happiness)),
           cleanliness: Math.min(100, Math.max(0, changes.cleanliness ?? p.cleanliness)),
         };
+        // Save changes to Firestore
         saveSinglePetData(p.id, {
           hunger: updatedPetData.hunger,
           happiness: updatedPetData.happiness,
@@ -284,8 +302,8 @@ export default function PocketPalPage() {
 
   const handleFeed = () => handleInteraction(
     (p) => ({
-      hunger: p.hunger + 25 + Math.floor(Math.random() * 10),
-      happiness: p.happiness + 5 + Math.floor(Math.random() * 5),
+      hunger: p.hunger + 25 + Math.floor(Math.random() * 10), // Increase hunger significantly
+      happiness: p.happiness + 5 + Math.floor(Math.random() * 5), // Small happiness boost
     }),
     "Yummy! That hit the spot!",
     `You fed ${currentPetDisplayName}!`
@@ -293,8 +311,8 @@ export default function PocketPalPage() {
 
   const handlePlay = () => handleInteraction(
     (p) => ({
-      happiness: p.happiness + 30 + Math.floor(Math.random() * 10),
-      hunger: p.hunger - 5 - Math.floor(Math.random() * 5),
+      happiness: p.happiness + 30 + Math.floor(Math.random() * 10), // Increase happiness significantly
+      hunger: p.hunger - 5 - Math.floor(Math.random() * 5), // Playing makes pet slightly hungry
     }),
     "Whee! That was fun!",
     `You played with ${currentPetDisplayName}!`
@@ -302,8 +320,8 @@ export default function PocketPalPage() {
 
   const handleClean = () => handleInteraction(
     (p) => ({
-      cleanliness: p.cleanliness + 40 + Math.floor(Math.random() * 10),
-      happiness: p.happiness + 10 + Math.floor(Math.random() * 5),
+      cleanliness: p.cleanliness + 40 + Math.floor(Math.random() * 10), // Increase cleanliness significantly
+      happiness: p.happiness + 10 + Math.floor(Math.random() * 5), // Small happiness boost from being clean
     }),
     "So fresh and so clean!",
     `You cleaned ${currentPetDisplayName}!`
@@ -317,7 +335,7 @@ export default function PocketPalPage() {
     setSpeciesForNaming(petDefinition);
     setIsNamingPet(true);
     setShowPetSelectionScreen(false);
-    setNewPetNameInput(petDefinition.defaultName); 
+    setNewPetNameInput(petDefinition.defaultName); // Pre-fill with default name
   };
 
   const handleNamePetSubmit = async (e: FormEvent) => {
@@ -577,6 +595,7 @@ export default function PocketPalPage() {
         ) : isNamingPet ? (
             <PetNamingUI />
         ) : !currentActivePet || !currentPetDefinition ? ( 
+          // This state occurs if user is logged in, not in selection/naming, but no active pet (e.g., still loading or no pets found)
           <CardContent className="p-6 text-center min-h-[400px] flex flex-col justify-center items-center">
             <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
             <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
@@ -587,6 +606,7 @@ export default function PocketPalPage() {
              )}
           </CardContent>
         ): (
+          // Main game interface for an active pet
           <>
             <CardContent className="p-6 space-y-6">
               <PetDisplay
@@ -633,6 +653,7 @@ export default function PocketPalPage() {
         )}
       </Card>
       
+      {/* Buttons outside the main card */}
       {user && currentActivePet && !showPetSelectionScreen && !isNamingPet && (
         <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN || isPetDataLoading} className="mt-4">
           {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetDisplayName} need?`}
