@@ -1,14 +1,17 @@
+
 "use client";
 
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useState, useEffect, useCallback, type ReactNode, type FormEvent } from "react";
 import Image from "next/image";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { PetDisplay } from "@/components/pet-display";
 import { StatusIndicator } from "@/components/status-indicator";
 import { InteractionButtons } from "@/components/interaction-buttons";
 import { petNeedsAssessment, PetNeedsAssessmentInput } from "@/ai/flows/pet-needs-assessment";
-import { Apple, Smile, Droplets, Info, LogIn, LogOut, UserCircle } from "lucide-react";
+import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,7 +37,7 @@ interface PetData {
 }
 
 export default function PocketPalPage() {
-  const { user, loading: authLoading, signInWithGoogle, signOut } = useAuth();
+  const { user, loading: authLoading, signInWithEmail, signUpWithEmail, signOut } = useAuth();
   const { toast } = useToast();
 
   const [petData, setPetData] = useState<PetData | null>(null);
@@ -49,20 +52,18 @@ export default function PocketPalPage() {
   const [isPetDataLoading, setIsPetDataLoading] = useState(true);
   const [showPetSelection, setShowPetSelection] = useState(false);
 
+  const [authAction, setAuthAction] = useState<'signin' | 'signup'>('signin');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
   const currentPetName = petData?.petName || selectedPetDefinition?.defaultName || "Your Pal";
 
-  // Load pet data from Firestore or initialize for new user/no user
   useEffect(() => {
     if (authLoading) {
-      // Authentication is still in progress, main skeleton will be shown.
-      // We might want to ensure isPetDataLoading is true here if we expect data.
-      // However, the main skeleton condition `authLoading || (...)` handles this.
-      // setIsPetDataLoading(true); // Could be set here, but might be redundant.
       return;
     }
 
     if (user && user.uid) {
-      // User is authenticated and UID is available. Attempt to load pet data.
       setIsPetDataLoading(true);
       const petDocRef = doc(db, "users", user.uid, "pet", "data");
       const unsubscribe = onSnapshot(petDocRef, (docSnap) => {
@@ -73,31 +74,28 @@ export default function PocketPalPage() {
           setSelectedPetDefinition(petDef);
           setShowPetSelection(false);
         } else {
-          // No pet data exists for this user, prompt for selection.
           setPetData(null);
-          setSelectedPetDefinition(PET_TYPES[0]); // Reset to default before selection
+          setSelectedPetDefinition(PET_TYPES[0]); 
           setShowPetSelection(true);
         }
-        setIsPetDataLoading(false); // Finished attempting to load data
+        setIsPetDataLoading(false); 
       }, (error) => {
         console.error("Error fetching pet data:", error);
         toast({ title: "Error", description: "Could not load pet data.", variant: "destructive" });
         setPetData(null);
-        setSelectedPetDefinition(PET_TYPES[0]); // Reset to default
-        setShowPetSelection(true); // Fallback to pet selection on error
-        setIsPetDataLoading(false); // Finished attempting to load data (with error)
+        setSelectedPetDefinition(PET_TYPES[0]); 
+        setShowPetSelection(true); 
+        setIsPetDataLoading(false); 
       });
       return () => unsubscribe();
     } else {
-      // No user, user without UID, or auth has finished loading but no user.
-      // Reset to initial state for a non-authenticated user.
       setPetData(null);
       setSelectedPetDefinition(PET_TYPES[0]);
       setPetImage(PET_TYPES[0].images.default.url);
       setPetImageHint(PET_TYPES[0].images.default.hint);
-      setPetMessage("Welcome to Pocket Pal! Sign in to meet your friend.");
-      setShowPetSelection(false); // No user, so no pet selection screen based on data.
-      setIsPetDataLoading(false); // Not loading pet data.
+      setPetMessage("Welcome to Pocket Pal! Sign in or create an account to meet your friend.");
+      setShowPetSelection(false); 
+      setIsPetDataLoading(false); 
     }
   }, [user, authLoading, toast]);
 
@@ -114,9 +112,8 @@ export default function PocketPalPage() {
     }
   }, [user, toast]);
 
-  // Update pet visuals and message based on current petData
   const updatePetVisualsAndMessage = useCallback(() => {
-    if (!selectedPetDefinition) return; // Ensure selectedPetDefinition is available
+    if (!selectedPetDefinition) return;
 
     const images = selectedPetDefinition.images;
     let currentImageSet = images.default;
@@ -140,15 +137,14 @@ export default function PocketPalPage() {
         currentImageSet = images.happy; 
         }
     } else {
-        // Default message if no petData (e.g. new user before selection)
-        message = `Hi! I'm ${selectedPetDefinition.defaultName}. Choose me or another Pal!`;
-        if(!user) message = "Sign in to get a Pocket Pal!";
+        message = `Hi! I'm ${selectedPetDefinition.defaultName}.`;
+        if(!user) message = "Sign in or create an account to get a Pocket Pal!";
     }
     
     setPetImage(currentImageSet.url);
     setPetImageHint(currentImageSet.hint);
 
-    if (!isLoadingAi) { // Don't override AI messages
+    if (!isLoadingAi) {
         setPetMessage(message);
     }
 
@@ -156,9 +152,8 @@ export default function PocketPalPage() {
 
   useEffect(() => {
     updatePetVisualsAndMessage();
-  }, [petData, selectedPetDefinition, updatePetVisualsAndMessage, user]); // Added user to deps for initial message
+  }, [petData, selectedPetDefinition, updatePetVisualsAndMessage, user]);
 
-  // Stat decrease interval
   useEffect(() => {
     if (!user || !petData || showPetSelection) return;
 
@@ -189,10 +184,8 @@ export default function PocketPalPage() {
     if (!petData || isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
       return;
     }
-
     setIsLoadingAi(true);
     setLastAiCallTimestamp(Date.now());
-    
     try {
       const assessmentInput: PetNeedsAssessmentInput = { 
         hunger: petData.hunger, 
@@ -220,7 +213,6 @@ export default function PocketPalPage() {
     }
   }, [petData, isLoadingAi, lastAiCallTimestamp, toast, currentPetName]);
   
-  // Auto AI call on critical stats
   useEffect(() => {
     if (!user || !petData || isLoadingAi || showPetSelection) return;
     if ((petData.hunger < 25 || petData.happiness < 25 || petData.cleanliness < 25) && (Date.now() - lastAiCallTimestamp > AI_COOLDOWN)) {
@@ -284,29 +276,38 @@ export default function PocketPalPage() {
       cleanliness: INITIAL_CLEANLINESS,
       lastUpdated: Timestamp.now(),
     };
-    setSelectedPetDefinition(petDefinition); // Update definition first for immediate visual consistency
+    setSelectedPetDefinition(petDefinition); 
     setPetData(newPetData); 
     await savePetData(newPetData); 
     setShowPetSelection(false);
-    setPetMessage(`Hi! I'm ${newPetData.petName}, your new Pal!`); // Set message after data is set
+    setPetMessage(`Hi! I'm ${newPetData.petName}, your new Pal!`); 
     toast({ description: `You've chosen ${petDefinition.name}!`});
   };
   
+  const handleAuthSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (authAction === 'signin') {
+      await signInWithEmail(email, password);
+    } else {
+      await signUpWithEmail(email, password);
+    }
+    // Clear form fields after submission attempt
+    setEmail('');
+    setPassword('');
+  };
+
   const AuthArea = () => (
     <div className="absolute top-4 right-4 z-10">
-      {user ? (
+      {user && (
         <div className="flex items-center gap-2">
            {user.photoURL && <Image src={user.photoURL} alt="User avatar" width={32} height={32} className="rounded-full" />}
-           {!user.photoURL && <UserCircle size={32} />}
-          <span className="text-sm text-foreground hidden sm:inline">{user.displayName || user.email}</span>
-          <Button variant="outline" size="sm" onClick={signOut}>
+           {(!user.photoURL && user.email) && <UserCircle size={32} />}
+           {user.displayName && <span className="text-sm text-foreground hidden sm:inline">{user.displayName}</span> }
+           {!user.displayName && user.email && <span className="text-sm text-foreground hidden sm:inline">{user.email}</span>}
+          <Button variant="outline" size="sm" onClick={signOut} disabled={authLoading}>
             <LogOut size={16} className="mr-1 sm:mr-2"/> Sign Out
           </Button>
         </div>
-      ) : (
-        <Button variant="outline" onClick={signInWithGoogle} disabled={authLoading}>
-          <LogIn size={16} className="mr-2"/> Sign In with Google
-        </Button>
       )}
     </div>
   );
@@ -335,11 +336,10 @@ export default function PocketPalPage() {
     </Card>
   );
 
-  // This is the primary loading state for the entire page after auth attempt.
   if (authLoading || (user && isPetDataLoading && !showPetSelection)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30">
-        <AuthArea />
+        { user && <AuthArea /> }
         <Skeleton className="w-full max-w-lg h-[600px] rounded-xl" />
         <p className="mt-4 text-foreground">Loading your Pocket Pal...</p>
       </div>
@@ -357,21 +357,61 @@ export default function PocketPalPage() {
         </CardHeader>
 
         {!user ? (
-          <CardContent className="p-6 text-center min-h-[400px] flex flex-col justify-center items-center">
-            <PetDisplay
+          <CardContent className="p-6 space-y-6">
+            <form onSubmit={handleAuthSubmit} className="space-y-4">
+              <CardTitle className="text-2xl font-bold text-center mb-4">
+                {authAction === 'signin' ? 'Sign In' : 'Create Account'}
+              </CardTitle>
+              <div>
+                <Label htmlFor="email">Email</Label>
+                <Input 
+                  id="email" 
+                  type="email" 
+                  placeholder="you@example.com" 
+                  value={email} 
+                  onChange={(e) => setEmail(e.target.value)} 
+                  required 
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="password">Password</Label>
+                <Input 
+                  id="password" 
+                  type="password" 
+                  placeholder="••••••••" 
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)} 
+                  required 
+                  className="mt-1"
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={authLoading}>
+                {authAction === 'signin' ? (
+                  <> <LogInIcon size={18} className="mr-2" /> Sign In </>
+                ) : (
+                  <> <UserPlus size={18} className="mr-2" /> Create Account </>
+                )}
+              </Button>
+            </form>
+            <Button 
+              variant="link" 
+              className="w-full" 
+              onClick={() => setAuthAction(authAction === 'signin' ? 'signup' : 'signin')}
+            >
+              {authAction === 'signin' ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
+            </Button>
+             <PetDisplay
                 petName={selectedPetDefinition?.defaultName || "Your Future Pal"}
                 imageUrl={selectedPetDefinition?.images.default.url || petImage}
                 altText={`Image of ${selectedPetDefinition?.defaultName || "default pet"}`}
                 imageHint={selectedPetDefinition?.images.default.hint || petImageHint}
               />
-            <p className="text-lg text-foreground my-4">{petMessage}</p>
-            <Button onClick={signInWithGoogle} size="lg" disabled={authLoading}>
-              <LogIn size={20} className="mr-2"/> Sign In with Google
-            </Button>
+              <p className="text-lg text-foreground my-4 text-center">{petMessage}</p>
           </CardContent>
         ) : showPetSelection ? (
            <PetSelectionUI />
-        ) : !petData || !selectedPetDefinition ? ( // Should be brief if data loading works
+        ) : !petData || !selectedPetDefinition ? ( 
           <CardContent className="p-6 text-center min-h-[400px] flex flex-col justify-center items-center">
              <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
              <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
