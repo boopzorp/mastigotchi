@@ -1,5 +1,3 @@
-# Firebase Studio
+# mastigotchi (MVP ver.)
 
-This is a NextJS starter in Firebase Studio.
-
-To get started, take a look at src/app/page.tsx.
+A virtual pet management system, inspired by Tamagotchi.
