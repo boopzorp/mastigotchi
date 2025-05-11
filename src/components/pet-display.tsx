@@ -15,7 +15,7 @@ interface PetDisplayProps {
 export function PetDisplay({ petName, imageUrl, altText, imageHint, className }: PetDisplayProps) {
   return (
     <Card className={cn("w-full max-w-[200px] sm:max-w-xs md:max-w-sm shadow-lg mx-auto overflow-hidden", className)}>
-      <CardContent className="flex flex-col items-center justify-center p-3 sm:p-4 md:p-5">
+      <CardContent className="flex flex-col items-center justify-center p-6 sm:p-8 md:p-10">
         <div className="relative w-36 h-36 sm:w-48 sm:h-48 md:w-60 md:h-60 rounded-lg overflow-hidden shadow-md">
           {imageUrl && (
             <Image
@@ -31,7 +31,7 @@ export function PetDisplay({ petName, imageUrl, altText, imageHint, className }:
             />
           )}
         </div>
-        <CardTitle className="text-xl sm:text-2xl md:text-3xl font-medium text-foreground mt-3 sm:mt-4 text-center">
+        <CardTitle className="text-l sm:text-xl md:text-3xl font-medium text-foreground mt-3 sm:mt-4 text-center">
           {petName}
         </CardTitle>
       </CardContent>
