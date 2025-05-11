@@ -8,7 +8,8 @@ import {
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
   signOut as firebaseSignOut, 
-  onAuthStateChanged 
+  onAuthStateChanged,
+  updateProfile
 } from 'firebase/auth';
 import { useToast } from "@/hooks/use-toast";
 
@@ -16,7 +17,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
-  signUpWithEmail: (email: string, pass: string) => Promise<void>;
+  signUpWithEmail: (email: string, pass: string, displayName: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -39,11 +40,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, pass);
-      // onAuthStateChanged will handle setting the user and setLoading(false) on success
       toast({
         title: "Signed In",
         description: "Welcome back!",
       });
+      // onAuthStateChanged will handle setLoading(false) on success via setUser
     } catch (error: any) {
       console.error("Error signing in with email:", error);
       toast({
@@ -55,15 +56,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const signUpWithEmail = async (email: string, pass: string) => {
+  const signUpWithEmail = async (email: string, pass: string, displayName: string) => {
     setLoading(true);
     try {
-      await createUserWithEmailAndPassword(auth, email, pass);
-      // onAuthStateChanged will handle setting the user and setLoading(false) on success
+      const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+      if (userCredential.user) {
+        await updateProfile(userCredential.user, { displayName });
+        // Manually update user state here if onAuthStateChanged doesn't fire fast enough
+        // or if immediate access to displayName is needed post-signup.
+        // However, onAuthStateChanged should pick up the new user including profile updates.
+      }
       toast({
         title: "Account Created",
         description: "Welcome! Your account has been successfully created.",
       });
+       // onAuthStateChanged will handle setLoading(false) on success via setUser
     } catch (error: any) {
       console.error("Error signing up with email:", error);
       toast({
@@ -79,11 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       await firebaseSignOut(auth);
-      // onAuthStateChanged will handle setting user to null and setLoading(false)
       toast({
         title: "Signed Out",
         description: "You have been successfully signed out.",
       });
+      // onAuthStateChanged will handle setting user to null and setLoading(false)
     } catch (error: any) {
       console.error("Error signing out:", error);
       toast({
@@ -109,4 +116,3 @@ export function useAuth() {
   }
   return context;
 }
-

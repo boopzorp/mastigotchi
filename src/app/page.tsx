@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useEffect, useCallback, type ReactNode, type FormEvent } from "react";
+import { useState, useEffect, useCallback, type FormEvent } from "react";
 import Image from "next/image";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,23 +11,24 @@ import { PetDisplay } from "@/components/pet-display";
 import { StatusIndicator } from "@/components/status-indicator";
 import { InteractionButtons } from "@/components/interaction-buttons";
 import { petNeedsAssessment, PetNeedsAssessmentInput } from "@/ai/flows/pet-needs-assessment";
-import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon } from "lucide-react";
+import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint, SwitchCamera } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, setDoc, onSnapshot, Timestamp } from "firebase/firestore";
-import { PET_TYPES, type PetType, type PetImages } from "@/config/pets";
+import { doc, getDoc, setDoc, onSnapshot, Timestamp, collection, addDoc, deleteDoc, query, limit, getDocs } from "firebase/firestore";
+import { PET_TYPES, type PetType } from "@/config/pets";
 
 const INITIAL_HUNGER = 70;
 const INITIAL_HAPPINESS = 80;
 const INITIAL_CLEANLINESS = 75;
+const MAX_PETS = 2;
 
 const STAT_DECREASE_INTERVAL = 5000; // 5 seconds
-const AI_CHECK_INTERVAL = 20000; // 20 seconds
 const AI_COOLDOWN = 30000; // 30 seconds before AI can be called again
 
-interface PetData {
+// Structure for data stored in Firestore (without the client-side 'id')
+interface FirestorePetData {
   petName: string;
   selectedPetTypeId: string;
   hunger: number;
@@ -36,12 +37,17 @@ interface PetData {
   lastUpdated: Timestamp;
 }
 
+// Structure used in the component's state, including the Firestore document ID
+interface PetData extends FirestorePetData {
+  id: string;
+}
+
 export default function PocketPalPage() {
   const { user, loading: authLoading, signInWithEmail, signUpWithEmail, signOut } = useAuth();
   const { toast } = useToast();
 
-  const [petData, setPetData] = useState<PetData | null>(null);
-  const [selectedPetDefinition, setSelectedPetDefinition] = useState<PetType | null>(PET_TYPES[0]);
+  const [userPets, setUserPets] = useState<PetData[]>([]);
+  const [activePetId, setActivePetId] = useState<string | null>(null);
   
   const [petImage, setPetImage] = useState(PET_TYPES[0].images.default.url);
   const [petImageHint, setPetImageHint] = useState(PET_TYPES[0].images.default.hint);
@@ -50,61 +56,75 @@ export default function PocketPalPage() {
   const [isLoadingAi, setIsLoadingAi] = useState(false);
   const [lastAiCallTimestamp, setLastAiCallTimestamp] = useState(0);
   const [isPetDataLoading, setIsPetDataLoading] = useState(true);
-  const [showPetSelection, setShowPetSelection] = useState(false);
+  
+  const [showPetSelectionScreen, setShowPetSelectionScreen] = useState(false);
+  const [isNamingPet, setIsNamingPet] = useState(false);
+  const [speciesForNaming, setSpeciesForNaming] = useState<PetType | null>(null);
+  const [newPetNameInput, setNewPetNameInput] = useState("");
 
   const [authAction, setAuthAction] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState(''); // For sign-up
 
-  const currentPetName = petData?.petName || selectedPetDefinition?.defaultName || "Your Pal";
+  const currentActivePet = userPets.find(p => p.id === activePetId);
+  const currentPetDefinition = currentActivePet ? PET_TYPES.find(pt => pt.id === currentActivePet.selectedPetTypeId) : null;
+  const currentPetDisplayName = currentActivePet?.petName || "Your Pal";
 
   useEffect(() => {
-    if (authLoading) {
-      return;
-    }
+    if (authLoading) return;
 
     if (user && user.uid) {
       setIsPetDataLoading(true);
-      const petDocRef = doc(db, "users", user.uid, "pet", "data");
-      const unsubscribe = onSnapshot(petDocRef, (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data() as PetData;
-          setPetData(data);
-          const petDef = PET_TYPES.find(p => p.id === data.selectedPetTypeId) || PET_TYPES[0];
-          setSelectedPetDefinition(petDef);
-          setShowPetSelection(false);
+      const petsColRef = collection(db, "users", user.uid, "pets");
+      const q = query(petsColRef, limit(MAX_PETS));
+
+      const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const pets: PetData[] = [];
+        querySnapshot.forEach((docSnap) => {
+          pets.push({ id: docSnap.id, ...docSnap.data() } as PetData);
+        });
+        setUserPets(pets);
+
+        if (pets.length > 0) {
+          if (!activePetId || !pets.find(p => p.id === activePetId)) {
+            setActivePetId(pets[0].id); // Default to first pet or if active pet was deleted
+          }
+          setShowPetSelectionScreen(false);
+          setIsNamingPet(false); 
         } else {
-          setPetData(null);
-          setSelectedPetDefinition(PET_TYPES[0]); 
-          setShowPetSelection(true);
+          setActivePetId(null);
+          setShowPetSelectionScreen(true); // No pets, show selection
         }
-        setIsPetDataLoading(false); 
+        setIsPetDataLoading(false);
       }, (error) => {
-        console.error("Error fetching pet data:", error);
-        toast({ title: "Error", description: "Could not load pet data.", variant: "destructive" });
-        setPetData(null);
-        setSelectedPetDefinition(PET_TYPES[0]); 
-        setShowPetSelection(true); 
-        setIsPetDataLoading(false); 
+        console.error("Error fetching pets data:", error);
+        toast({ title: "Error", description: "Could not load your pets.", variant: "destructive" });
+        setUserPets([]);
+        setActivePetId(null);
+        setShowPetSelectionScreen(true);
+        setIsPetDataLoading(false);
       });
       return () => unsubscribe();
     } else {
-      setPetData(null);
-      setSelectedPetDefinition(PET_TYPES[0]);
+      // User logged out or not logged in
+      setUserPets([]);
+      setActivePetId(null);
       setPetImage(PET_TYPES[0].images.default.url);
       setPetImageHint(PET_TYPES[0].images.default.hint);
-      setPetMessage("Welcome to Pocket Pal! Sign in or create an account to meet your friend.");
-      setShowPetSelection(false); 
-      setIsPetDataLoading(false); 
+      setPetMessage("Welcome to Pocket Pal! Sign in or create an account.");
+      setShowPetSelectionScreen(false);
+      setIsNamingPet(false);
+      setIsPetDataLoading(false);
     }
   }, [user, authLoading, toast]);
 
 
-  const savePetData = useCallback(async (currentData: Omit<PetData, 'lastUpdated'>) => {
-    if (user && user.uid && currentData) {
-      const petDocRef = doc(db, "users", user.uid, "pet", "data");
+  const saveSinglePetData = useCallback(async (petId: string, dataToUpdate: Partial<FirestorePetData>) => {
+    if (user && user.uid && petId) {
+      const petDocRef = doc(db, "users", user.uid, "pets", petId);
       try {
-        await setDoc(petDocRef, { ...currentData, lastUpdated: Timestamp.now() }, { merge: true });
+        await setDoc(petDocRef, { ...dataToUpdate, lastUpdated: Timestamp.now() }, { merge: true });
       } catch (error) {
         console.error("Error saving pet data:", error);
         toast({ title: "Error", description: "Could not save pet progress.", variant: "destructive" });
@@ -113,32 +133,42 @@ export default function PocketPalPage() {
   }, [user, toast]);
 
   const updatePetVisualsAndMessage = useCallback(() => {
-    if (!selectedPetDefinition) return;
-
-    const images = selectedPetDefinition.images;
+    if (!currentActivePet || !currentPetDefinition) {
+      if (!user) {
+         setPetImage(PET_TYPES[0].images.default.url);
+         setPetImageHint(PET_TYPES[0].images.default.hint);
+         setPetMessage("Sign in or create an account to get a Pocket Pal!");
+      } else if (showPetSelectionScreen) {
+         setPetImage(PET_TYPES[0].images.default.url);
+         setPetImageHint(PET_TYPES[0].images.default.hint);
+         setPetMessage("Choose your first Pocket Pal!");
+      } else if (isNamingPet && speciesForNaming) {
+        setPetImage(speciesForNaming.images.default.url);
+        setPetImageHint(speciesForNaming.images.default.hint);
+        setPetMessage(`What will you name your new ${speciesForNaming.name}?`);
+      }
+      return;
+    }
+    
+    const images = currentPetDefinition.images;
     let currentImageSet = images.default;
-    let message = "I'm doing okay!";
+    let message = `${currentActivePet.petName} is doing okay!`;
 
-    if (petData) {
-        const { hunger, happiness, cleanliness } = petData;
-        if (hunger < 30) {
-        currentImageSet = images.hungry;
-        message = "I'm so hungry...";
-        } else if (cleanliness < 30) {
-        currentImageSet = images.dirty;
-        message = "I feel a bit yucky...";
-        } else if (happiness < 30) {
-        currentImageSet = images.sad;
-        message = "I'm feeling down...";
-        } else if (happiness > 90 && hunger > 80 && cleanliness > 80) {
-        currentImageSet = images.content;
-        message = "I'm feeling great! Thanks to you!";
-        } else {
-        currentImageSet = images.happy; 
-        }
+    const { hunger, happiness, cleanliness } = currentActivePet;
+    if (hunger < 30) {
+      currentImageSet = images.hungry;
+      message = `${currentActivePet.petName} is so hungry...`;
+    } else if (cleanliness < 30) {
+      currentImageSet = images.dirty;
+      message = `${currentActivePet.petName} feels a bit yucky...`;
+    } else if (happiness < 30) {
+      currentImageSet = images.sad;
+      message = `${currentActivePet.petName} is feeling down...`;
+    } else if (happiness > 90 && hunger > 80 && cleanliness > 80) {
+      currentImageSet = images.content;
+      message = `${currentActivePet.petName} is feeling great! Thanks to you!`;
     } else {
-        message = `Hi! I'm ${selectedPetDefinition.defaultName}.`;
-        if(!user) message = "Sign in or create an account to get a Pocket Pal!";
+      currentImageSet = images.happy; 
     }
     
     setPetImage(currentImageSet.url);
@@ -147,56 +177,63 @@ export default function PocketPalPage() {
     if (!isLoadingAi) {
         setPetMessage(message);
     }
-
-  }, [petData, selectedPetDefinition, isLoadingAi, user]);
+  }, [currentActivePet, currentPetDefinition, isLoadingAi, user, showPetSelectionScreen, isNamingPet, speciesForNaming]);
 
   useEffect(() => {
     updatePetVisualsAndMessage();
-  }, [petData, selectedPetDefinition, updatePetVisualsAndMessage, user]);
+  }, [currentActivePet, currentPetDefinition, updatePetVisualsAndMessage]);
 
   useEffect(() => {
-    if (!user || !petData || showPetSelection) return;
+    if (!user || !currentActivePet || showPetSelectionScreen || isNamingPet) return;
 
     const intervalId = setInterval(() => {
-      setPetData((prevData) => {
-        if (!prevData) return null;
-        const newHunger = Math.max(0, prevData.hunger - Math.floor(Math.random() * 3 + 1));
-        const newCleanliness = Math.max(0, prevData.cleanliness - Math.floor(Math.random() * 2 + 1));
-        let newHappiness = prevData.happiness;
-        if (newHunger < 40) newHappiness -= 1;
-        if (newCleanliness < 40) newHappiness -=1;
-        if (newHappiness === prevData.happiness && prevData.happiness > 0) newHappiness -=1;
-        
-        const updatedData = {
-          ...prevData,
-          hunger: newHunger,
-          cleanliness: newCleanliness,
-          happiness: Math.max(0, newHappiness),
-        };
-        savePetData(updatedData);
-        return updatedData;
-      });
+      setUserPets(prevPets => 
+        prevPets.map(p => {
+          if (p.id !== activePetId) return p;
+
+          const newHunger = Math.max(0, p.hunger - Math.floor(Math.random() * 3 + 1));
+          const newCleanliness = Math.max(0, p.cleanliness - Math.floor(Math.random() * 2 + 1));
+          let newHappiness = p.happiness;
+          if (newHunger < 40) newHappiness -= 1;
+          if (newCleanliness < 40) newHappiness -=1;
+          if (newHappiness === p.happiness && p.happiness > 0) newHappiness -=1;
+          
+          const updatedPet = {
+            ...p,
+            hunger: newHunger,
+            cleanliness: newCleanliness,
+            happiness: Math.max(0, newHappiness),
+          };
+          // Firestore update is done here to avoid rapid writes if state updates frequently
+          saveSinglePetData(p.id, { 
+            hunger: updatedPet.hunger, 
+            cleanliness: updatedPet.cleanliness, 
+            happiness: updatedPet.happiness 
+          });
+          return updatedPet;
+        })
+      );
     }, STAT_DECREASE_INTERVAL);
     return () => clearInterval(intervalId);
-  }, [user, petData, savePetData, showPetSelection]);
+  }, [user, currentActivePet, saveSinglePetData, showPetSelectionScreen, isNamingPet, activePetId]);
 
   const callPetNeedsAI = useCallback(async () => {
-    if (!petData || isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
+    if (!currentActivePet || isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
       return;
     }
     setIsLoadingAi(true);
     setLastAiCallTimestamp(Date.now());
     try {
       const assessmentInput: PetNeedsAssessmentInput = { 
-        hunger: petData.hunger, 
-        happiness: petData.happiness, 
-        cleanliness: petData.cleanliness 
+        hunger: currentActivePet.hunger, 
+        happiness: currentActivePet.happiness, 
+        cleanliness: currentActivePet.cleanliness 
       };
       setPetMessage("Thinking about what I need..."); 
       const result = await petNeedsAssessment(assessmentInput);
       setPetMessage(result.needs);
       toast({
-        title: `${currentPetName} Says:`,
+        title: `${currentPetDisplayName} Says:`,
         description: result.needs,
         duration: 5000,
       });
@@ -211,32 +248,39 @@ export default function PocketPalPage() {
     } finally {
       setIsLoadingAi(false);
     }
-  }, [petData, isLoadingAi, lastAiCallTimestamp, toast, currentPetName]);
+  }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, toast, currentPetDisplayName]);
   
   useEffect(() => {
-    if (!user || !petData || isLoadingAi || showPetSelection) return;
-    if ((petData.hunger < 25 || petData.happiness < 25 || petData.cleanliness < 25) && (Date.now() - lastAiCallTimestamp > AI_COOLDOWN)) {
+    if (!user || !currentActivePet || isLoadingAi || showPetSelectionScreen || isNamingPet) return;
+    if ((currentActivePet.hunger < 25 || currentActivePet.happiness < 25 || currentActivePet.cleanliness < 25) && (Date.now() - lastAiCallTimestamp > AI_COOLDOWN)) {
       callPetNeedsAI();
     }
-  }, [petData, isLoadingAi, lastAiCallTimestamp, callPetNeedsAI, showPetSelection]);
+  }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, callPetNeedsAI, showPetSelectionScreen, isNamingPet]);
 
-  const handleInteraction = (statUpdater: (prevData: PetData) => Partial<PetData>, message: string, toastMessage: string) => {
-    if (!petData || !user || showPetSelection) return;
-    setPetData(prevData => {
-      if (!prevData) return null;
-      const changes = statUpdater(prevData);
-      const updatedData = {
-        ...prevData,
-        ...changes,
-        hunger: Math.min(100, Math.max(0, changes.hunger ?? prevData.hunger)),
-        happiness: Math.min(100, Math.max(0, changes.happiness ?? prevData.happiness)),
-        cleanliness: Math.min(100, Math.max(0, changes.cleanliness ?? prevData.cleanliness)),
-      };
-      savePetData(updatedData);
-      return updatedData;
-    });
+  const handleInteraction = (statUpdater: (prevPet: PetData) => Partial<PetData>, message: string, toastMessage: string) => {
+    if (!currentActivePet || !user || showPetSelectionScreen || isNamingPet) return;
+    
+    setUserPets(prevPets => 
+      prevPets.map(p => {
+        if (p.id !== activePetId) return p;
+        const changes = statUpdater(p);
+        const updatedPet = {
+          ...p,
+          ...changes,
+          hunger: Math.min(100, Math.max(0, changes.hunger ?? p.hunger)),
+          happiness: Math.min(100, Math.max(0, changes.happiness ?? p.happiness)),
+          cleanliness: Math.min(100, Math.max(0, changes.cleanliness ?? p.cleanliness)),
+        };
+        saveSinglePetData(p.id, {
+          hunger: updatedPet.hunger,
+          happiness: updatedPet.happiness,
+          cleanliness: updatedPet.cleanliness,
+        });
+        return updatedPet;
+      })
+    );
     setPetMessage(message);
-    toast({ description: toastMessage.replace("{PET_NAME}", currentPetName) });
+    toast({ description: toastMessage.replace("{PET_NAME}", currentPetDisplayName) });
   };
 
   const handleFeed = () => handleInteraction(
@@ -245,7 +289,7 @@ export default function PocketPalPage() {
       happiness: p.happiness + 5 + Math.floor(Math.random() * 5),
     }),
     "Yummy! That hit the spot!",
-    `You fed ${currentPetName}!`
+    `You fed ${currentPetDisplayName}!`
   );
 
   const handlePlay = () => handleInteraction(
@@ -254,7 +298,7 @@ export default function PocketPalPage() {
       hunger: p.hunger - 5 - Math.floor(Math.random() * 5),
     }),
     "Whee! That was fun!",
-    `You played with ${currentPetName}!`
+    `You played with ${currentPetDisplayName}!`
   );
 
   const handleClean = () => handleInteraction(
@@ -263,25 +307,49 @@ export default function PocketPalPage() {
       happiness: p.happiness + 10 + Math.floor(Math.random() * 5),
     }),
     "So fresh and so clean!",
-    `You cleaned ${currentPetName}!`
+    `You cleaned ${currentPetDisplayName}!`
   );
 
-  const handleSelectPet = async (petDefinition: PetType) => {
-    if (!user) return;
-    const newPetData: PetData = {
-      petName: petDefinition.defaultName,
-      selectedPetTypeId: petDefinition.id,
+  const handleSelectSpeciesForNaming = (petDefinition: PetType) => {
+    if (!user || userPets.length >= MAX_PETS) {
+      toast({ title: "Oops!", description: `You can only have up to ${MAX_PETS} pets.`, variant: "destructive" });
+      return;
+    }
+    setSpeciesForNaming(petDefinition);
+    setIsNamingPet(true);
+    setShowPetSelectionScreen(false);
+    setNewPetNameInput(petDefinition.defaultName); // Pre-fill with default name
+  };
+
+  const handleNamePetSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!user || !speciesForNaming || !newPetNameInput.trim() || userPets.length >= MAX_PETS) {
+      toast({ title: "Error", description: "Cannot add pet. Please check details.", variant: "destructive" });
+      return;
+    }
+    
+    const newPetFirestoreData: FirestorePetData = {
+      petName: newPetNameInput.trim(),
+      selectedPetTypeId: speciesForNaming.id,
       hunger: INITIAL_HUNGER,
       happiness: INITIAL_HAPPINESS,
       cleanliness: INITIAL_CLEANLINESS,
       lastUpdated: Timestamp.now(),
     };
-    setSelectedPetDefinition(petDefinition); 
-    setPetData(newPetData); 
-    await savePetData(newPetData); 
-    setShowPetSelection(false);
-    setPetMessage(`Hi! I'm ${newPetData.petName}, your new Pal!`); 
-    toast({ description: `You've chosen ${petDefinition.name}!`});
+
+    try {
+      const petDocRef = await addDoc(collection(db, "users", user.uid, "pets"), newPetFirestoreData);
+      // The onSnapshot listener will update userPets and handle activePetId if needed.
+      // We can optimistically set the new pet as active.
+      setActivePetId(petDocRef.id);
+      setIsNamingPet(false);
+      setSpeciesForNaming(null);
+      setNewPetNameInput("");
+      toast({ description: `You've adopted ${newPetFirestoreData.petName}!`});
+    } catch (error) {
+      console.error("Error creating new pet:", error);
+      toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
+    }
   };
   
   const handleAuthSubmit = async (e: FormEvent) => {
@@ -289,21 +357,33 @@ export default function PocketPalPage() {
     if (authAction === 'signin') {
       await signInWithEmail(email, password);
     } else {
-      await signUpWithEmail(email, password);
+      if (!username.trim()) {
+        toast({ title: "Username Required", description: "Please enter a username for sign up.", variant: "destructive"});
+        return;
+      }
+      await signUpWithEmail(email, password, username.trim());
     }
-    // Clear form fields after submission attempt
-    setEmail('');
-    setPassword('');
+    // Clear form fields after submission attempt is handled by AuthContext or here if needed
+    // setEmail(''); setPassword(''); setUsername(''); // Keep if auth context doesn't clear them
+  };
+
+  const handleAdoptNewPetClick = () => {
+    if (userPets.length < MAX_PETS) {
+      setShowPetSelectionScreen(true);
+    } else {
+      toast({ title: "Max Pets Reached", description: `You already have ${MAX_PETS} pets.`, variant: "default"});
+    }
   };
 
   const AuthArea = () => (
     <div className="absolute top-4 right-4 z-10">
       {user && (
         <div className="flex items-center gap-2">
-           {user.photoURL && <Image src={user.photoURL} alt="User avatar" width={32} height={32} className="rounded-full" />}
-           {(!user.photoURL && user.email) && <UserCircle size={32} />}
-           {user.displayName && <span className="text-sm text-foreground hidden sm:inline">{user.displayName}</span> }
-           {!user.displayName && user.email && <span className="text-sm text-foreground hidden sm:inline">{user.email}</span>}
+           {user.photoURL ? 
+             <Image src={user.photoURL} alt="User avatar" width={32} height={32} className="rounded-full" /> :
+             <UserCircle size={32} />
+           }
+           <span className="text-sm text-foreground hidden sm:inline">{user.displayName || user.email}</span>
           <Button variant="outline" size="sm" onClick={signOut} disabled={authLoading}>
             <LogOut size={16} className="mr-1 sm:mr-2"/> Sign Out
           </Button>
@@ -316,11 +396,17 @@ export default function PocketPalPage() {
     <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-8">
       <CardHeader>
         <CardTitle className="text-2xl font-bold text-center">Choose Your Pocket Pal!</CardTitle>
-        <CardDescription className="text-center">Select a companion to start your journey.</CardDescription>
+        <CardDescription className="text-center">Select a species for your new companion.</CardDescription>
       </CardHeader>
       <CardContent className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
         {PET_TYPES.map((petDef) => (
-          <Button key={petDef.id} onClick={() => handleSelectPet(petDef)} className="w-full justify-start py-6 text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" variant="outline">
+          <Button 
+            key={petDef.id} 
+            onClick={() => handleSelectSpeciesForNaming(petDef)} 
+            className="w-full justify-start py-6 text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
+            variant="outline"
+            disabled={userPets.length >= MAX_PETS}
+          >
             <Image 
               src={petDef.images.default.url} 
               alt={petDef.name} 
@@ -333,10 +419,73 @@ export default function PocketPalPage() {
           </Button>
         ))}
       </CardContent>
+       <CardFooter>
+        <Button variant="ghost" onClick={() => { setShowPetSelectionScreen(false); if(userPets.length === 0 && user) signOut(); /* force re-auth if stuck */}} className="w-full">
+            Cancel
+        </Button>
+      </CardFooter>
     </Card>
   );
 
-  if (authLoading || (user && isPetDataLoading && !showPetSelection)) {
+  const PetNamingUI = () => (
+    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-8">
+      <CardHeader>
+        <CardTitle className="text-2xl font-bold text-center">Name Your New Pal!</CardTitle>
+        {speciesForNaming && <CardDescription className="text-center">You've chosen a {speciesForNaming.name}. What will you call it?</CardDescription>}
+      </CardHeader>
+      <form onSubmit={handleNamePetSubmit}>
+        <CardContent className="p-6 space-y-4">
+            {speciesForNaming && (
+                 <Image 
+                    src={speciesForNaming.images.default.url} 
+                    alt={speciesForNaming.name} 
+                    width={100} 
+                    height={100} 
+                    className="mx-auto rounded-md mb-4"
+                    data-ai-hint={speciesForNaming.images.default.hint}
+                />
+            )}
+          <div>
+            <Label htmlFor="petName">Pet's Name</Label>
+            <Input 
+              id="petName" 
+              type="text" 
+              placeholder="e.g., Sparky" 
+              value={newPetNameInput} 
+              onChange={(e) => setNewPetNameInput(e.target.value)} 
+              required 
+              className="mt-1"
+            />
+          </div>
+        </CardContent>
+        <CardFooter className="flex justify-between p-4">
+          <Button variant="ghost" type="button" onClick={() => { setIsNamingPet(false); setSpeciesForNaming(null); setShowPetSelectionScreen(true); /* Go back to species selection */ }}>Back</Button>
+          <Button type="submit">Adopt {newPetNameInput || "Pal"}!</Button>
+        </CardFooter>
+      </form>
+    </Card>
+  );
+
+  const PetSwitcherUI = () => (
+    userPets.length > 1 && (
+      <div className="mt-4 flex flex-wrap justify-center gap-2">
+        {userPets.map(pet => (
+          <Button 
+            key={pet.id} 
+            variant={pet.id === activePetId ? "default" : "outline"}
+            onClick={() => setActivePetId(pet.id)}
+            size="sm"
+            className="shadow-md"
+          >
+            <PawPrint size={16} className="mr-2"/>
+            {pet.petName}
+          </Button>
+        ))}
+      </div>
+    )
+  );
+
+  if (authLoading || (user && isPetDataLoading && !showPetSelectionScreen && !isNamingPet && userPets.length === 0)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30">
         { user && <AuthArea /> }
@@ -348,12 +497,12 @@ export default function PocketPalPage() {
   
   const mainContent = (
     <>
-       <Card className="w-full max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative">
+      <Card className="w-full max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative">
         <CardHeader className="text-center border-b border-border pb-4 pt-6">
           <CardTitle className="text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground">
             Pocket Pal
           </CardTitle>
-           <AuthArea />
+          <AuthArea />
         </CardHeader>
 
         {!user ? (
@@ -362,6 +511,20 @@ export default function PocketPalPage() {
               <CardTitle className="text-2xl font-bold text-center mb-4">
                 {authAction === 'signin' ? 'Sign In' : 'Create Account'}
               </CardTitle>
+              {authAction === 'signup' && (
+                 <div>
+                    <Label htmlFor="username">Username</Label>
+                    <Input 
+                    id="username" 
+                    type="text" 
+                    placeholder="Your Username" 
+                    value={username} 
+                    onChange={(e) => setUsername(e.target.value)} 
+                    required 
+                    className="mt-1"
+                    />
+                </div>
+              )}
               <div>
                 <Label htmlFor="email">Email</Label>
                 <Input 
@@ -401,44 +564,49 @@ export default function PocketPalPage() {
             >
               {authAction === 'signin' ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
             </Button>
-             <PetDisplay
-                petName={selectedPetDefinition?.defaultName || "Your Future Pal"}
-                imageUrl={selectedPetDefinition?.images.default.url || petImage}
-                altText={`Image of ${selectedPetDefinition?.defaultName || "default pet"}`}
-                imageHint={selectedPetDefinition?.images.default.hint || petImageHint}
-              />
-              <p className="text-lg text-foreground my-4 text-center">{petMessage}</p>
+            <PetDisplay
+              petName={PET_TYPES[0].defaultName}
+              imageUrl={petImage}
+              altText={`Image of default pet`}
+              imageHint={petImageHint}
+            />
+            <p className="text-lg text-foreground my-4 text-center">{petMessage}</p>
           </CardContent>
-        ) : showPetSelection ? (
+        ) : showPetSelectionScreen ? (
            <PetSelectionUI />
-        ) : !petData || !selectedPetDefinition ? ( 
+        ) : isNamingPet ? (
+            <PetNamingUI />
+        ) : !currentActivePet || !currentPetDefinition ? ( 
           <CardContent className="p-6 text-center min-h-[400px] flex flex-col justify-center items-center">
-             <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
-             <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
-             <Skeleton className="w-1/2 h-6 mx-auto" />
-             <p className="mt-4 text-muted-foreground">Preparing your Pal...</p>
+            <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
+            <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
+            <Skeleton className="w-1/2 h-6 mx-auto" />
+            <p className="mt-4 text-muted-foreground">Loading your Pal...</p>
+             {userPets.length === 0 && !isPetDataLoading && (
+                <Button onClick={handleAdoptNewPetClick} className="mt-4">Adopt First Pal</Button>
+             )}
           </CardContent>
         ): (
           <>
             <CardContent className="p-6 space-y-6">
               <PetDisplay
-                petName={currentPetName}
+                petName={currentPetDisplayName}
                 imageUrl={petImage}
-                altText={`Image of ${currentPetName}`}
+                altText={`Image of ${currentPetDisplayName}`}
                 imageHint={petImageHint}
               />
 
               <div className="space-y-3 pt-4">
-                <StatusIndicator label="Hunger" value={petData.hunger} icon={<Apple className="w-5 h-5" />} />
-                <StatusIndicator label="Happiness" value={petData.happiness} icon={<Smile className="w-5 h-5" />} />
-                <StatusIndicator label="Cleanliness" value={petData.cleanliness} icon={<Droplets className="w-5 h-5" />} />
+                <StatusIndicator label="Hunger" value={currentActivePet.hunger} icon={<Apple className="w-5 h-5" />} />
+                <StatusIndicator label="Happiness" value={currentActivePet.happiness} icon={<Smile className="w-5 h-5" />} />
+                <StatusIndicator label="Cleanliness" value={currentActivePet.cleanliness} icon={<Droplets className="w-5 h-5" />} />
               </div>
 
               <Card className="bg-card/50 shadow-inner">
                 <CardHeader className="pb-2 pt-3 px-4">
                     <CardDescription className="flex items-center text-sm text-muted-foreground">
                         <Info size={16} className="mr-2 shrink-0"/>
-                        {currentPetName} says:
+                        {currentPetDisplayName} says:
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="px-4 pb-3">
@@ -451,25 +619,32 @@ export default function PocketPalPage() {
                   )}
                 </CardContent>
               </Card>
-
             </CardContent>
             <CardFooter className="p-0 border-t border-border">
               <InteractionButtons
                 onFeed={handleFeed}
                 onPlay={handlePlay}
                 onClean={handleClean}
-                isLoading={isLoadingAi || !petData}
+                isLoading={isLoadingAi || !currentActivePet}
                 className="rounded-none rounded-b-xl"
               />
             </CardFooter>
           </>
         )}
       </Card>
-      {user && petData && !showPetSelection && (
+      
+      {user && currentActivePet && !showPetSelectionScreen && !isNamingPet && (
         <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN} className="mt-4">
-          {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetName} need?`}
+          {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetDisplayName} need?`}
         </Button>
       )}
+
+      {user && userPets.length > 0 && userPets.length < MAX_PETS && !showPetSelectionScreen && !isNamingPet && (
+         <Button variant="secondary" onClick={handleAdoptNewPetClick} className="mt-4 shadow-md">
+            <PawPrint size={18} className="mr-2" /> Adopt Another Pal
+          </Button>
+      )}
+      {user && <PetSwitcherUI />}
     </>
   );
 
@@ -479,4 +654,3 @@ export default function PocketPalPage() {
     </div>
   );
 }
-
