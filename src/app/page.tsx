@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
@@ -96,7 +95,6 @@ export default function PocketPalPage() {
         });
         setUserPets(pets);
 
-        // Persist pet data on log in
         if (pets.length > 0) {
           if (!activePetId || !pets.find(p => p.id === activePetId)) {
             setActivePetId(pets[0].id); 
@@ -115,7 +113,7 @@ export default function PocketPalPage() {
         setUserPets([]);
         setActivePetId(null);
         setShowPetSelectionScreen(true);
-        setIsNamingPet(false); // Also ensure naming pet is false on error
+        setIsNamingPet(false);
         setIsPetDataLoading(false);
       });
       return () => unsubscribe();
@@ -129,7 +127,7 @@ export default function PocketPalPage() {
       setIsNamingPet(false);
       setIsPetDataLoading(false);
     }
-  }, [user, authLoading, activePetId, toast]);
+  }, [user, authLoading, toast]);
 
 
   const saveSinglePetData = useCallback(async (petId: string, dataToUpdate: Partial<FirestorePetData>) => {
@@ -209,7 +207,7 @@ export default function PocketPalPage() {
           let newHappiness = p.happiness;
           if (newHunger < 40 || newCleanliness < 40) {
             newHappiness = Math.max(0, p.happiness - STAT_DECREASE_AMOUNT);
-          } else if (p.happiness > 0) { // Slight decrease over time if not very low
+          } else if (p.happiness > 0) { 
             newHappiness = Math.max(0, p.happiness - Math.floor(STAT_DECREASE_AMOUNT / 2) || 0);
           }
           
@@ -340,7 +338,6 @@ export default function PocketPalPage() {
         canPerform: petActionState.countToday < actionDefinition.frequencyPerDay,
       };
     }
-    // If no state or last performed date is not today, it can be performed (count is 0 for today)
     return { countToday: 0, canPerform: true };
   }, [currentActivePet]);
 
@@ -382,7 +379,7 @@ export default function PocketPalPage() {
     toast({ description: feedbackMessage });
 
     if (option.popupMessage) {
-      setPopupMessage(option.popupMessage);
+      setPopupMessage(option.popupMessage.replace('{PET_NAME}', currentPetDisplayName));
       setShowPopup(true);
     }
   };
@@ -413,12 +410,14 @@ export default function PocketPalPage() {
       happiness: INITIAL_HAPPINESS,
       cleanliness: INITIAL_CLEANLINESS,
       lastUpdated: Timestamp.now(),
-      actionStates: {}, // Initialize actionStates
+      actionStates: {},
     };
 
     try {
-      setIsPetDataLoading(true);
+      setIsPetDataLoading(true); // Set loading true before Firestore operation
       const petDocRef = await addDoc(collection(db, "users", user.uid, "pets"), newPetFirestoreData);
+      // activePetId will be set by onSnapshot listener, which also sets isPetDataLoading to false.
+      // setShowPetSelectionScreen(false) and setIsNamingPet(false) will also be handled by onSnapshot.
       setIsNamingPet(false);
       setSpeciesForNaming(null);
       setNewPetNameInput("");
@@ -426,7 +425,7 @@ export default function PocketPalPage() {
     } catch (error) {
       console.error("Error creating new pet:", error);
       toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
-      setIsPetDataLoading(false);
+      setIsPetDataLoading(false); // Ensure loading is false on error
     }
   };
   
@@ -446,6 +445,7 @@ export default function PocketPalPage() {
   const handleAdoptNewPetClick = () => {
     if (userPets.length < MAX_PETS) {
       setShowPetSelectionScreen(true);
+      setIsNamingPet(false); // Ensure naming screen is not shown
     } else {
       toast({ title: "Max Pets Reached", description: `You already have ${MAX_PETS} pets.`, variant: "default"});
     }
@@ -496,7 +496,13 @@ export default function PocketPalPage() {
         ))}
       </CardContent>
        <CardFooter>
-        <Button variant="ghost" onClick={() => { setShowPetSelectionScreen(false); if(userPets.length === 0 && user && !authLoading) signOut(); }} className="w-full">
+        <Button variant="ghost" onClick={() => { 
+            setShowPetSelectionScreen(false); 
+            if(userPets.length === 0 && user && !authLoading) {
+                // If user cancels initial pet selection and has no pets, effectively log them out or show a message.
+                // For now, just hiding selection. If they had no pets, main screen shows "Adopt First Pal".
+            }
+        }} className="w-full">
             Cancel
         </Button>
       </CardFooter>
@@ -561,7 +567,8 @@ export default function PocketPalPage() {
     )
   );
   
-  if (authLoading || (user && isPetDataLoading && !showPetSelectionScreen && !isNamingPet)) {
+  if (authLoading || (user && isPetDataLoading && !currentActivePet && userPets.length === 0 && !showPetSelectionScreen && !isNamingPet)) {
+    // This covers initial auth load, and pet data load ONLY IF no pets yet determined and not in selection/naming flow
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30">
         { user && <AuthArea /> }
@@ -648,21 +655,36 @@ export default function PocketPalPage() {
             />
             <p className="text-lg text-foreground my-4 text-center">{petMessage}</p>
           </CardContent>
-        ) : showPetSelectionScreen ? (
+        ) : showPetSelectionScreen ? ( // If user is logged in and this flag is true
            <PetSelectionUI />
-        ) : isNamingPet ? (
+        ) : isNamingPet ? ( // If user is logged in and this flag is true
             <PetNamingUI />
         ) : !currentActivePet || !currentPetDefinition ? ( 
+          // This state means user is logged in, not in selection/naming, but no active pet yet.
+          // Could be because pets are still loading, or user has no pets.
           <CardContent className="p-6 text-center min-h-[400px] flex flex-col justify-center items-center">
-            <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
-            <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
-            <Skeleton className="w-1/2 h-6 mx-auto" />
-            <p className="mt-4 text-muted-foreground">Loading your Pal...</p>
-             {userPets.length === 0 && !isPetDataLoading && (
-                <Button onClick={handleAdoptNewPetClick} className="mt-4">Adopt First Pal</Button>
-             )}
+            {isPetDataLoading ? (
+              <>
+                <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
+                <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
+                <Skeleton className="w-1/2 h-6 mx-auto" />
+                <p className="mt-4 text-muted-foreground">Loading your Pal...</p>
+              </>
+            ) : (
+               // Not loading, and no active pet means user has no pets.
+               <>
+                 <PetDisplay
+                    petName="No Pal Yet"
+                    imageUrl={PET_TYPES[0].images.default.url} // Generic image
+                    altText="No pet selected"
+                    imageHint={PET_TYPES[0].images.default.hint}
+                 />
+                 <p className="mt-4 text-muted-foreground">You don't have a Pocket Pal yet.</p>
+                 <Button onClick={handleAdoptNewPetClick} className="mt-4">Adopt First Pal</Button>
+               </>
+            )}
           </CardContent>
-        ): (
+        ): ( // User is logged in, not in selection/naming, and has an active pet
           <>
             <CardContent className="p-6 space-y-6">
               <PetDisplay
@@ -752,4 +774,3 @@ export default function PocketPalPage() {
     </div>
   );
 }
-
