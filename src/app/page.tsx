@@ -96,6 +96,7 @@ export default function PocketPalPage() {
         });
         setUserPets(pets);
 
+        // Persist pet data on log in
         if (pets.length > 0) {
           if (!activePetId || !pets.find(p => p.id === activePetId)) {
             setActivePetId(pets[0].id); 
@@ -105,6 +106,7 @@ export default function PocketPalPage() {
         } else {
           setActivePetId(null);
           setShowPetSelectionScreen(true); 
+          setIsNamingPet(false); 
         }
         setIsPetDataLoading(false);
       }, (error) => {
@@ -113,6 +115,7 @@ export default function PocketPalPage() {
         setUserPets([]);
         setActivePetId(null);
         setShowPetSelectionScreen(true);
+        setIsNamingPet(false); // Also ensure naming pet is false on error
         setIsPetDataLoading(false);
       });
       return () => unsubscribe();
@@ -749,3 +752,4 @@ export default function PocketPalPage() {
     </div>
   );
 }
+
