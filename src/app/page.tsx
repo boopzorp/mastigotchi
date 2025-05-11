@@ -326,8 +326,10 @@ export default function PocketPalPage() {
         }
       } catch (e) {
         console.error("Error accessing localStorage for notifiedActionStates:", e);
+        loadedStates = {}; // Reset to empty if parsing fails
       }
       
+      // Only update if there's a meaningful difference to avoid loops if objects are new but values are same
       if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
         setNotifiedActionStates(loadedStates);
       }
@@ -340,12 +342,13 @@ export default function PocketPalPage() {
         console.error("Error removing yesterday's notifiedActionStates from localStorage:", e);
       }
     } else {
+      // Clear states if no user or active pet
       if (Object.keys(notifiedActionStatesRef.current).length > 0) {
         setNotifiedActionStates({});
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, activePetId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps 
+  }, [user, activePetId]); // Removed notifiedActionStatesRef from deps to prevent potential loops
 
 
   // Notification Logic (Sending Interval)
@@ -617,9 +620,9 @@ export default function PocketPalPage() {
 
   const PetSelectionUI = () => (
     <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
-      <CardHeader>
-        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Choose Your mastigotchi!</CardTitle>
-        <CardDescription className="text-center text-xs sm:text-sm">Select a species for your new companion.</CardDescription>
+      <CardHeader className="text-center">
+        <CardTitle className="text-xl sm:text-2xl font-bold">Choose Your mastigotchi!</CardTitle>
+        <CardDescription className="text-xs sm:text-sm">Select a species for your new companion.</CardDescription>
       </CardHeader>
       <CardContent className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         {PET_TYPES.map((petDef) => (
@@ -645,9 +648,8 @@ export default function PocketPalPage() {
        <CardFooter className="p-4">
         <Button variant="ghost" onClick={() => { 
             setShowPetSelectionScreen(false); 
-             if (userPets.length === 0 && !activePetId) { // Check if user has no pets at all
-                // If no pets, they must adopt one, so don't change message or re-route to "loading"
-                // Instead, message will be "Adopt a mastigotchi..." from main logic
+             if (userPets.length === 0 && !activePetId) { 
+                // If no pets, message will be "Adopt a mastigotchi..." from main logic
              }
         }} className="w-full">
             Cancel
@@ -728,14 +730,13 @@ export default function PocketPalPage() {
     <>
       <Card className="w-full max-w-md sm:max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative mt-12 sm:mt-16">
         <CardHeader className="text-center border-b border-border pb-3 pt-4 sm:pb-4 sm:pt-6">
-          <CardTitle className="text-3xl sm:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground font-gamja">
+          <CardTitle className="text-3xl sm:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground">
             mastigotchi
           </CardTitle>
         </CardHeader>
 
         {!user ? (
           <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
-            {/* Removed PetDisplay from here */}
             <div className="w-full mt-4">
               <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-4">
                 <CardTitle className="text-lg sm:text-xl font-bold text-center mb-2">
@@ -815,7 +816,7 @@ export default function PocketPalPage() {
                     petName="No Pal Yet"
                     imageUrl={PET_TYPES[0].images.default.url} 
                     altText="No pet selected"
-                    imageHint={petImageHint || PET_TYPES[0].images.default.hint} // Use state for imageHint
+                    imageHint={PET_TYPES[0].images.default.hint}
                     className="max-w-[200px] sm:max-w-xs md:max-w-sm" 
                  />
                  <p className="mt-4 text-muted-foreground text-xs sm:text-sm">{petMessage}</p>

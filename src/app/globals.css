@@ -1,3 +1,4 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -43,7 +44,6 @@ body {
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
-    /* Removed --dot-gothic-16: ; as next/font handles this */
   }
   .dark {
     --background: 220 15% 15%; /* Dark Blue-Gray */

@@ -1,3 +1,4 @@
+
 import type { Config } from "tailwindcss";
 
 export default {
@@ -13,11 +14,8 @@ export default {
         // Set the 'sans' stack to use the --font-dot-gothic-16 variable.
         // This will be the default font for most text if 'font-sans' is applied or inherited.
         sans: ['var(--font-dot-gothic-16)', 'monospace', 'sans-serif'],
-        // Keep mono if it's used for specific elements, otherwise it can be removed.
-        // It refers to a --font-geist-mono variable that was previously defined in layout.tsx.
-        // If Geist Mono is no longer used, this can be cleaned up.
-        // For now, assuming it might be used elsewhere or was intended.
-        mono: ['var(--font-geist-mono)', 'monospace'], 
+        // Ensure mono also uses DotGothic16, with monospace as a fallback.
+        mono: ['var(--font-dot-gothic-16)', 'monospace'], 
       },
   		colors: {
   			background: 'hsl(var(--background))',
