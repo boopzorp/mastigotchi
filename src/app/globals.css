@@ -2,9 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Remove the conflicting body font-family rule that was here:
 body {
   font-family: Arial, Helvetica, sans-serif;
 }
+*/
 
 @layer base {
   :root {
@@ -41,6 +43,7 @@ body {
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+    /* Removed --dot-gothic-16: ; as next/font handles this */
   }
   .dark {
     --background: 220 15% 15%; /* Dark Blue-Gray */
@@ -83,6 +86,9 @@ body {
     @apply border-border;
   }
   body {
+    /* Apply the DotGothic16 font using the CSS variable defined in layout.tsx */
+    /* Add fallback fonts like monospace and sans-serif */
+    font-family: var(--font-dot-gothic-16), monospace, sans-serif;
     @apply bg-background text-foreground;
   }
 }

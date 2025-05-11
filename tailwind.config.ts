@@ -10,9 +10,14 @@ export default {
   theme: {
   	extend: {
       fontFamily: {
-        sans: ['var(--font-geist-sans)'],
-        mono: ['var(--font-geist-mono)'],
-        gamja: ['var(--font-gamja-flower)', 'cursive'], // Added Gamja Flower
+        // Set the 'sans' stack to use the --font-dot-gothic-16 variable.
+        // This will be the default font for most text if 'font-sans' is applied or inherited.
+        sans: ['var(--font-dot-gothic-16)', 'monospace', 'sans-serif'],
+        // Keep mono if it's used for specific elements, otherwise it can be removed.
+        // It refers to a --font-geist-mono variable that was previously defined in layout.tsx.
+        // If Geist Mono is no longer used, this can be cleaned up.
+        // For now, assuming it might be used elsewhere or was intended.
+        mono: ['var(--font-geist-mono)', 'monospace'], 
       },
   		colors: {
   			background: 'hsl(var(--background))',
