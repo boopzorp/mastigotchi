@@ -797,7 +797,7 @@ export default function PocketPalPage() {
                 petName={currentPetDisplayName}
                 imageUrl={petImage}
                 altText={`Image of ${currentPetDisplayName}`}
-                imageHint={imageHint}
+                imageHint={petImageHint}
               />
 
               <div className="space-y-2 sm:space-y-3 pt-2 sm:pt-4">
