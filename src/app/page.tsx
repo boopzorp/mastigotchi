@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useEffect, useCallback, type FormEvent, useRef } from "react";
@@ -17,9 +16,9 @@ import { petNeedsAssessment, PetNeedsAssessmentInput } from "@/ai/flows/pet-need
 import { Apple, Smile, Droplets, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint, BellRing } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuth, type AuthUser } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
-import { doc, setDoc, onSnapshot, Timestamp, collection, addDoc, query, limit, getDocs } from "firebase/firestore";
+import { doc, setDoc, onSnapshot, Timestamp, collection, addDoc, query, limit } from "firebase/firestore";
 import { PET_TYPES, type PetType } from "@/config/pets";
 import { useBrowserNotifications } from "@/hooks/useBrowserNotifications";
 
@@ -58,6 +57,163 @@ interface NotifiedActionState {
   lastNotifiedDate: string; // YYYY-MM-DD
 }
 
+// --- Top-level UI Component Definitions ---
+
+interface AuthAreaProps {
+  user: AuthUser | null;
+  onSignOut: () => void;
+  authLoading: boolean;
+}
+
+const AuthAreaComponent: React.FC<AuthAreaProps> = ({ user, onSignOut, authLoading }) => {
+  if (!user) return null;
+  return (
+    <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-20">
+      <div className="flex items-center gap-2 bg-card p-2 rounded-lg shadow-md">
+        {user.photoURL ?
+          <Image src={user.photoURL} alt="User avatar" width={32} height={32} className="rounded-full" /> :
+          <UserCircle size={24} className="text-foreground" />
+        }
+        <span className="text-xs sm:text-sm text-foreground hidden md:inline">{user.displayName || user.email}</span>
+        <Button variant="outline" size="sm" onClick={onSignOut} disabled={authLoading}>
+          <LogOut size={16} className="mr-1 sm:mr-2" />
+          <span className="hidden sm:inline">Sign Out</span>
+          <span className="sm:hidden">Out</span>
+        </Button>
+      </div>
+    </div>
+  );
+};
+
+interface PetSelectionUIProps {
+  petTypes: PetType[];
+  onSelectSpecies: (petDefinition: PetType) => void;
+  onCancel: () => void;
+  userPetsCount: number;
+  maxPets: number;
+}
+
+const PetSelectionUIComponent: React.FC<PetSelectionUIProps> = ({ petTypes, onSelectSpecies, onCancel, userPetsCount, maxPets }) => (
+  <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
+    <CardHeader className="text-center">
+      <CardTitle className="text-xl sm:text-2xl font-bold">Choose Your mastigotchi!</CardTitle>
+      <CardDescription className="text-xs sm:text-sm">Select a species for your new companion.</CardDescription>
+    </CardHeader>
+    <CardContent className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+      {petTypes.map((petDef) => (
+        <Button
+          key={petDef.id}
+          onClick={() => onSelectSpecies(petDef)}
+          className="w-full justify-center py-4 sm:py-6 text-sm sm:text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left"
+          variant="outline"
+          disabled={userPetsCount >= maxPets}
+        >
+          <Image
+            src={petDef.images.default.url}
+            alt={petDef.name}
+            width={32}
+            height={32}
+            className="mb-2 sm:mb-0 sm:mr-4 rounded-md w-8 h-8 sm:w-10 sm:h-10"
+            data-ai-hint={petDef.images.default.hint}
+          />
+          <span className="text-center sm:text-left">{petDef.name}</span>
+        </Button>
+      ))}
+    </CardContent>
+    <CardFooter className="p-4">
+      <Button variant="ghost" onClick={onCancel} className="w-full">
+        Cancel
+      </Button>
+    </CardFooter>
+  </Card>
+);
+
+interface PetNamingUIProps {
+  speciesForNaming: PetType | null;
+  newPetNameInput: string;
+  onNewPetNameInputChange: (value: string) => void;
+  onSubmit: (e: FormEvent) => void;
+  onBackClick: () => void;
+  isPetDataLoading: boolean;
+}
+
+const PetNamingUIComponent: React.FC<PetNamingUIProps> = ({
+  speciesForNaming,
+  newPetNameInput,
+  onNewPetNameInputChange,
+  onSubmit,
+  onBackClick,
+  isPetDataLoading,
+}) => {
+  if (!speciesForNaming) return null;
+
+  return (
+    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
+      <CardHeader>
+        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Name Your New Pal!</CardTitle>
+        <CardDescription className="text-center text-xs sm:text-sm">You've chosen a {speciesForNaming.name}. What will you call it?</CardDescription>
+      </CardHeader>
+      <form onSubmit={onSubmit}>
+        <CardContent className="p-4 sm:p-6 space-y-3 sm:space-y-4">
+          <Image
+            src={speciesForNaming.images.default.url}
+            alt={speciesForNaming.name}
+            width={80}
+            height={80}
+            className="mx-auto rounded-md mb-3 sm:mb-4 w-20 h-20 sm:w-24 sm:h-24"
+            data-ai-hint={speciesForNaming.images.default.hint}
+          />
+          <div>
+            <Label htmlFor="petName" className="text-xs sm:text-sm">Pet's Name</Label>
+            <Input
+              id="petName"
+              type="text"
+              placeholder="e.g., Sparky"
+              value={newPetNameInput}
+              onChange={(e) => onNewPetNameInputChange(e.target.value)}
+              required
+              className="mt-1 text-sm sm:text-base"
+              autoFocus
+            />
+          </div>
+        </CardContent>
+        <CardFooter className="flex justify-between p-3 sm:p-4">
+          <Button variant="ghost" type="button" onClick={onBackClick}>Back</Button>
+          <Button type="submit" disabled={isPetDataLoading}>Adopt {newPetNameInput.trim() || speciesForNaming.defaultName || "Pal"}!</Button>
+        </CardFooter>
+      </form>
+    </Card>
+  );
+};
+
+interface PetSwitcherUIProps {
+  userPets: PetData[];
+  activePetId: string | null;
+  onSwitchPet: (petId: string) => void;
+}
+
+const PetSwitcherUIComponent: React.FC<PetSwitcherUIProps> = ({ userPets, activePetId, onSwitchPet }) => {
+  if (userPets.length <= 1) return null;
+  return (
+    <div className="mt-4 flex flex-wrap justify-center gap-2">
+      {userPets.map(pet => (
+        <Button
+          key={pet.id}
+          variant={pet.id === activePetId ? "default" : "outline"}
+          onClick={() => onSwitchPet(pet.id)}
+          size="sm"
+          className="shadow-md text-xs sm:text-sm"
+        >
+          <PawPrint size={14} className="mr-1 sm:mr-2 sm:size-16" />
+          {pet.petName}
+        </Button>
+      ))}
+    </div>
+  );
+};
+
+
+// --- Main Page Component ---
 export default function PocketPalPage() {
   const { user, loading: authLoading, signInWithEmail, signUpWithEmail, signOut } = useAuth();
   const { toast } = useToast();
@@ -112,26 +268,31 @@ export default function PocketPalPage() {
   }, [user, toast]);
 
   const updatePetVisualsAndMessage = useCallback(() => {
-    const defaultPetImageDetails = PET_TYPES[0].images.default;
-    if (!currentActivePet || !currentPetDefinition) {
-      if (!user) { // User not signed in
-         setPetImage(""); // No image for auth screen
+    if (!user) { 
+         setPetImage(""); 
          setPetImageHint("");
-         setPetMessage(""); // No message for auth screen
-      } else if (showPetSelectionScreen) { // User signed in, selecting pet
-         setPetImage(""); // No specific pet image during selection
+         setPetMessage(""); 
+         return;
+      }
+
+    if (showPetSelectionScreen) {
+         setPetImage("");
          setPetImageHint("");
          setPetMessage("Choose your first mastigotchi!");
-      } else if (isNamingPet && speciesForNaming) { // User signed in, naming pet
+         return;
+    }
+    if (isNamingPet && speciesForNaming) {
         setPetImage(speciesForNaming.images.default.url);
         setPetImageHint(speciesForNaming.images.default.hint);
         setPetMessage(`What will you name your new ${speciesForNaming.name}?`);
-      } else { // User signed in, no active pet yet (e.g., data loading or no pets)
-        setPetImage(""); // No specific pet image
+        return;
+    }
+
+    if (!currentActivePet || !currentPetDefinition) {
+        setPetImage(""); 
         setPetImageHint("");
         setPetMessage("Loading your Pal or adopt one!");
-      }
-      return;
+        return;
     }
     
     const images = currentPetDefinition.images;
@@ -151,7 +312,7 @@ export default function PocketPalPage() {
     } else if (happiness > 90 && hunger > 80 && cleanliness > 80) {
       currentImageSet = images.content;
       message = `${currentActivePet.petName} is feeling great! Thanks to you!`;
-    } else { // Default to happy if not fitting other criteria explicitly.
+    } else { 
       currentImageSet = images.happy; 
     }
     
@@ -255,9 +416,6 @@ export default function PocketPalPage() {
     } else {
       setUserPets([]);
       setActivePetId(null);
-      setPetImage(""); // No pet image when logged out
-      setPetImageHint("");
-      setPetMessage(""); // No message when logged out
       setShowPetSelectionScreen(false);
       setIsNamingPet(false);
       setIsPetDataLoading(false);
@@ -326,10 +484,9 @@ export default function PocketPalPage() {
         }
       } catch (e) {
         console.error("Error accessing localStorage for notifiedActionStates:", e);
-        loadedStates = {}; // Reset to empty if parsing fails
+        loadedStates = {}; 
       }
       
-      // Only update if there's a meaningful difference to avoid loops if objects are new but values are same
       if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
         setNotifiedActionStates(loadedStates);
       }
@@ -342,16 +499,13 @@ export default function PocketPalPage() {
         console.error("Error removing yesterday's notifiedActionStates from localStorage:", e);
       }
     } else {
-      // Clear states if no user or active pet
       if (Object.keys(notifiedActionStatesRef.current).length > 0) {
         setNotifiedActionStates({});
       }
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, [user, activePetId]); // Removed notifiedActionStatesRef from deps to prevent potential loops
+  }, [user, activePetId]);
 
 
-  // Notification Logic (Sending Interval)
   useEffect(() => {
     if (!user || !currentActivePet || !activePetId || notificationPermission !== 'granted' || showPetSelectionScreen || isNamingPet) {
       return;
@@ -557,7 +711,11 @@ export default function PocketPalPage() {
     } catch (error) {
       console.error("Error creating new pet:", error);
       toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
-      setIsPetDataLoading(false); 
+    } finally {
+        // setIsPetDataLoading will be set to false by the onSnapshot listener
+        // when the new pet is detected and list is updated.
+        // However, if addDoc fails, we might need to set it false here.
+        // The onSnapshot should handle loading state correctly.
     }
   };
   
@@ -598,128 +756,17 @@ export default function PocketPalPage() {
     }
   };
 
-
-  const AuthArea = () => (
-    <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-20">
-      {user && (
-        <div className="flex items-center gap-2 bg-card p-2 rounded-lg shadow-md">
-           {user.photoURL ? 
-             <Image src={user.photoURL} alt="User avatar" width={32} height={32} className="rounded-full" /> :
-             <UserCircle size={24} className="text-foreground" />
-           }
-           <span className="text-xs sm:text-sm text-foreground hidden md:inline">{user.displayName || user.email}</span>
-          <Button variant="outline" size="sm" onClick={signOut} disabled={authLoading}>
-            <LogOut size={16} className="mr-1 sm:mr-2"/> 
-            <span className="hidden sm:inline">Sign Out</span>
-            <span className="sm:hidden">Out</span>
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-
-  const PetSelectionUI = () => (
-    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
-      <CardHeader className="text-center">
-        <CardTitle className="text-xl sm:text-2xl font-bold">Choose Your mastigotchi!</CardTitle>
-        <CardDescription className="text-xs sm:text-sm">Select a species for your new companion.</CardDescription>
-      </CardHeader>
-      <CardContent className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-        {PET_TYPES.map((petDef) => (
-          <Button 
-            key={petDef.id} 
-            onClick={() => handleSelectSpeciesForNaming(petDef)} 
-            className="w-full justify-center py-4 sm:py-6 text-sm sm:text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
-            variant="outline"
-            disabled={userPets.length >= MAX_PETS && !userPets.find(p => p.selectedPetTypeId === petDef.id)}
-          >
-            <Image 
-              src={petDef.images.default.url} 
-              alt={petDef.name} 
-              width={32} 
-              height={32} 
-              className="mb-2 sm:mb-0 sm:mr-4 rounded-md w-8 h-8 sm:w-10 sm:h-10"
-              data-ai-hint={petDef.images.default.hint}
-            />
-            <span className="text-center sm:text-left">{petDef.name}</span>
-          </Button>
-        ))}
-      </CardContent>
-       <CardFooter className="p-4">
-        <Button variant="ghost" onClick={() => { 
-            setShowPetSelectionScreen(false); 
-             if (userPets.length === 0 && !activePetId) { 
-                // If no pets, message will be "Adopt a mastigotchi..." from main logic
-             }
-        }} className="w-full">
-            Cancel
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-
-  const PetNamingUI = () => (
-    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
-      <CardHeader>
-        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Name Your New Pal!</CardTitle>
-        {speciesForNaming && <CardDescription className="text-center text-xs sm:text-sm">You've chosen a {speciesForNaming.name}. What will you call it?</CardDescription>}
-      </CardHeader>
-      <form onSubmit={handleNamePetSubmit}>
-        <CardContent className="p-4 sm:p-6 space-y-3 sm:space-y-4">
-            {speciesForNaming && (
-                 <Image 
-                    src={speciesForNaming.images.default.url} 
-                    alt={speciesForNaming.name} 
-                    width={80} 
-                    height={80} 
-                    className="mx-auto rounded-md mb-3 sm:mb-4 w-20 h-20 sm:w-24 sm:h-24"
-                    data-ai-hint={speciesForNaming.images.default.hint}
-                />
-            )}
-          <div>
-            <Label htmlFor="petName" className="text-xs sm:text-sm">Pet's Name</Label>
-            <Input 
-              id="petName" 
-              type="text" 
-              placeholder="e.g., Sparky" 
-              value={newPetNameInput} 
-              onChange={(e) => setNewPetNameInput(e.target.value)} 
-              required 
-              className="mt-1 text-sm sm:text-base"
-            />
-          </div>
-        </CardContent>
-        <CardFooter className="flex justify-between p-3 sm:p-4">
-          <Button variant="ghost" type="button" onClick={() => { setIsNamingPet(false); setSpeciesForNaming(null); setShowPetSelectionScreen(true); }}>Back</Button>
-          <Button type="submit" disabled={isPetDataLoading}>Adopt {newPetNameInput || "Pal"}!</Button>
-        </CardFooter>
-      </form>
-    </Card>
-  );
-
-  const PetSwitcherUI = () => (
-    userPets.length > 1 && (
-      <div className="mt-4 flex flex-wrap justify-center gap-2">
-        {userPets.map(pet => (
-          <Button 
-            key={pet.id} 
-            variant={pet.id === activePetId ? "default" : "outline"}
-            onClick={() => setActivePetId(pet.id)}
-            size="sm"
-            className="shadow-md text-xs sm:text-sm"
-          >
-            <PawPrint size={14} className="mr-1 sm:mr-2 sm:size-16" />
-            {pet.petName}
-          </Button>
-        ))}
-      </div>
-    )
-  );
+  const handleNamingBackClick = () => {
+    setIsNamingPet(false);
+    setSpeciesForNaming(null);
+    setNewPetNameInput(""); // Clear input when going back
+    setShowPetSelectionScreen(true); 
+  };
   
   if (authLoading || (user && isPetDataLoading && userPets.length === 0 && !showPetSelectionScreen && !isNamingPet && activePetId === null )) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30 relative">
-        { user && <AuthArea /> }
+        { user && <AuthAreaComponent user={user} onSignOut={signOut} authLoading={authLoading} /> }
         <Skeleton className="w-full max-w-xs sm:max-w-lg h-[400px] sm:h-[600px] rounded-xl" />
         <p className="mt-4 text-foreground">Loading your mastigotchi...</p>
       </div>
@@ -798,9 +845,26 @@ export default function PocketPalPage() {
             </div>
           </CardContent>
         ) : showPetSelectionScreen ? (
-           <PetSelectionUI />
+           <PetSelectionUIComponent 
+             petTypes={PET_TYPES}
+             onSelectSpecies={handleSelectSpeciesForNaming}
+             onCancel={() => {
+                setShowPetSelectionScreen(false);
+                // If user cancels and has no pets, they might see the "Adopt First Pal" screen.
+                // updatePetVisualsAndMessage will handle the message.
+             }}
+             userPetsCount={userPets.length}
+             maxPets={MAX_PETS}
+           />
         ) : isNamingPet ? (
-            <PetNamingUI />
+            <PetNamingUIComponent 
+              speciesForNaming={speciesForNaming}
+              newPetNameInput={newPetNameInput}
+              onNewPetNameInputChange={setNewPetNameInput}
+              onSubmit={handleNamePetSubmit}
+              onBackClick={handleNamingBackClick}
+              isPetDataLoading={isPetDataLoading}
+            />
         ) : !currentActivePet || !currentPetDefinition ? ( 
           <CardContent className="p-4 sm:p-6 text-center min-h-[300px] sm:min-h-[400px] flex flex-col justify-center items-center">
             {isPetDataLoading ? (
@@ -814,12 +878,12 @@ export default function PocketPalPage() {
                <>
                  <PetDisplay
                     petName="No Pal Yet"
-                    imageUrl={PET_TYPES[0].images.default.url} 
+                    imageUrl={petImage || PET_TYPES[0].images.default.url} 
                     altText="No pet selected"
-                    imageHint={PET_TYPES[0].images.default.hint}
+                    imageHint={petImageHint || PET_TYPES[0].images.default.hint}
                     className="max-w-[200px] sm:max-w-xs md:max-w-sm" 
                  />
-                 <p className="mt-4 text-muted-foreground text-xs sm:text-sm">{petMessage}</p>
+                 <p className="mt-4 text-muted-foreground text-xs sm:text-sm">{petMessage || "Adopt your first mastigotchi to get started!"}</p>
                  <Button onClick={handleAdoptNewPetClick} className="mt-4 text-sm sm:text-base">Adopt First Pal</Button>
                </>
             )}
@@ -897,7 +961,13 @@ export default function PocketPalPage() {
             <PawPrint size={16} className="mr-2 sm:size-18" /> Adopt Another Pal
           </Button>
       )}
-      {user && !isPetDataLoading && userPets.length > 0 && <PetSwitcherUI />}
+      {user && !isPetDataLoading && userPets.length > 0 && 
+        <PetSwitcherUIComponent 
+            userPets={userPets}
+            activePetId={activePetId}
+            onSwitchPet={setActivePetId}
+        />
+      }
 
       <AlertDialog open={showPopup} onOpenChange={setShowPopup}>
         <AlertDialogContent>
@@ -916,10 +986,10 @@ export default function PocketPalPage() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-start pt-8 sm:pt-12 bg-background p-2 sm:p-4 selection:bg-primary/30 relative">
-      <AuthArea />
+    <div className={`min-h-screen flex flex-col items-center justify-start pt-8 sm:pt-12 bg-background p-2 sm:p-4 selection:bg-primary/30 relative ${user && currentActivePet && !showPetSelectionScreen && !isNamingPet ? 'bg-cover bg-center bg-no-repeat' : ''}`}
+         style={user && currentActivePet && !showPetSelectionScreen && !isNamingPet ? { backgroundImage: "url('/background.jpg')" } : {}}>
+      <AuthAreaComponent user={user} onSignOut={signOut} authLoading={authLoading} />
       {mainContent}
     </div>
   );
 }
-
