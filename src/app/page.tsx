@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
@@ -13,22 +14,26 @@ import { UserActionsDisplay } from "@/components/user-actions-display";
 import { USER_ACTIONS, type UserAction, type UserActionOption } from "@/config/userActions";
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { petNeedsAssessment, PetNeedsAssessmentInput } from "@/ai/flows/pet-needs-assessment";
-import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint } from "lucide-react";
+import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint, BellRing } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
 import { doc, setDoc, onSnapshot, Timestamp, collection, addDoc, query, limit } from "firebase/firestore";
 import { PET_TYPES, type PetType } from "@/config/pets";
+import { useBrowserNotifications } from "@/hooks/useBrowserNotifications";
 
 const INITIAL_HUNGER = 70;
 const INITIAL_HAPPINESS = 80;
 const INITIAL_CLEANLINESS = 75;
 const MAX_PETS = 2;
 
-const STAT_DECREASE_INTERVAL = 900000; // 15 minutes (15 * 60 * 1000 ms)
-const STAT_DECREASE_AMOUNT = 1; // Decrease by 1 point each interval
-const AI_COOLDOWN = 30000; // 30 seconds before AI can be called again
+const STAT_DECREASE_INTERVAL = 900000; // 15 minutes
+const STAT_DECREASE_AMOUNT = 1;
+const AI_COOLDOWN = 30000; // 30 seconds
+
+const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
+const NOTIFICATION_PROBABILITY = 0.3; // 30% chance to send a notification per check if conditions met
 
 interface ActionState {
   countToday: number;
@@ -41,16 +46,22 @@ interface FirestorePetData {
   happiness: number;
   cleanliness: number;
   lastUpdated: Timestamp;
-  actionStates?: Record<string, ActionState>; // Keyed by action ID
+  actionStates?: Record<string, ActionState>;
 }
 
 interface PetData extends FirestorePetData {
   id: string;
 }
 
+interface NotifiedActionState {
+  notifiedTodayCount: number;
+  lastNotifiedDate: string; // YYYY-MM-DD
+}
+
 export default function PocketPalPage() {
   const { user, loading: authLoading, signInWithEmail, signUpWithEmail, signOut } = useAuth();
   const { toast } = useToast();
+  const { permission: notificationPermission, isSupported: notificationsSupported, requestPermission: requestNotificationPermission, sendNotification } = useBrowserNotifications();
 
   const [userPets, setUserPets] = useState<PetData[]>([]);
   const [activePetId, setActivePetId] = useState<string | null>(null);
@@ -76,59 +87,11 @@ export default function PocketPalPage() {
   const [showPopup, setShowPopup] = useState(false);
   const [popupMessage, setPopupMessage] = useState("");
 
+  const [notifiedActionStates, setNotifiedActionStates] = useState<Record<string, NotifiedActionState>>({});
+
   const currentActivePet = userPets.find(p => p.id === activePetId);
   const currentPetDefinition = currentActivePet ? PET_TYPES.find(pt => pt.id === currentActivePet.selectedPetTypeId) : null;
   const currentPetDisplayName = currentActivePet?.petName || "Your Pal";
-
-  useEffect(() => {
-    if (authLoading) return;
-
-    if (user && user.uid) {
-      setIsPetDataLoading(true);
-      const petsColRef = collection(db, "users", user.uid, "pets");
-      const q = query(petsColRef, limit(MAX_PETS));
-
-      const unsubscribe = onSnapshot(q, (querySnapshot) => {
-        const pets: PetData[] = [];
-        querySnapshot.forEach((docSnap) => {
-          pets.push({ id: docSnap.id, ...docSnap.data() } as PetData);
-        });
-        setUserPets(pets);
-
-        if (pets.length > 0) {
-          if (!activePetId || !pets.find(p => p.id === activePetId)) {
-            setActivePetId(pets[0].id); 
-          }
-          setShowPetSelectionScreen(false);
-          setIsNamingPet(false); 
-        } else {
-          setActivePetId(null);
-          setShowPetSelectionScreen(true); 
-          setIsNamingPet(false); 
-        }
-        setIsPetDataLoading(false);
-      }, (error) => {
-        console.error("Error fetching pets data:", error);
-        toast({ title: "Error", description: "Could not load your pets.", variant: "destructive" });
-        setUserPets([]);
-        setActivePetId(null);
-        setShowPetSelectionScreen(true);
-        setIsNamingPet(false);
-        setIsPetDataLoading(false);
-      });
-      return () => unsubscribe();
-    } else {
-      setUserPets([]);
-      setActivePetId(null);
-      setPetImage(PET_TYPES[0].images.default.url);
-      setPetImageHint(PET_TYPES[0].images.default.hint);
-      setPetMessage("Welcome to Pocket Pal! Sign in or create an account.");
-      setShowPetSelectionScreen(false);
-      setIsNamingPet(false);
-      setIsPetDataLoading(false);
-    }
-  }, [user, authLoading, toast]);
-
 
   const saveSinglePetData = useCallback(async (petId: string, dataToUpdate: Partial<FirestorePetData>) => {
     if (user && user.uid && petId) {
@@ -189,6 +152,107 @@ export default function PocketPalPage() {
     }
   }, [currentActivePet, currentPetDefinition, isLoadingAi, user, showPetSelectionScreen, isNamingPet, speciesForNaming]);
 
+  const callPetNeedsAI = useCallback(async () => {
+    if (!currentActivePet || isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
+      return;
+    }
+    setIsLoadingAi(true);
+    setLastAiCallTimestamp(Date.now());
+    try {
+      const assessmentInput: PetNeedsAssessmentInput = { 
+        hunger: currentActivePet.hunger, 
+        happiness: currentActivePet.happiness, 
+        cleanliness: currentActivePet.cleanliness 
+      };
+      setPetMessage("Thinking about what I need...");
+      const result = await petNeedsAssessment(assessmentInput);
+      setPetMessage(result.needs);
+      toast({
+        title: `${currentPetDisplayName} Says:`,
+        description: result.needs,
+        duration: 5000,
+      });
+    } catch (error) {
+      console.error("Error calling petNeedsAssessment:", error);
+      setPetMessage("Hmm, I'm not sure what I need right now. Maybe try an action?");
+      toast({
+        title: "Error",
+        description: "Could not get pet's needs. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoadingAi(false);
+    }
+  }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, toast, currentPetDisplayName]);
+
+  const getActionStateForPet = useCallback((actionId: string): { countToday: number; canPerform: boolean } => {
+    if (!currentActivePet || !USER_ACTIONS) return { countToday: 0, canPerform: false };
+
+    const actionDefinition = USER_ACTIONS.find(a => a.id === actionId);
+    if (!actionDefinition) return { countToday: 0, canPerform: false };
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const petActionState = currentActivePet.actionStates?.[actionId];
+
+    if (petActionState && petActionState.lastPerformedDate === todayStr) {
+      return {
+        countToday: petActionState.countToday,
+        canPerform: petActionState.countToday < actionDefinition.frequencyPerDay,
+      };
+    }
+    return { countToday: 0, canPerform: true };
+  }, [currentActivePet]);
+
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (user && user.uid) {
+      setIsPetDataLoading(true);
+      const petsColRef = collection(db, "users", user.uid, "pets");
+      const q = query(petsColRef, limit(MAX_PETS));
+
+      const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const pets: PetData[] = [];
+        querySnapshot.forEach((docSnap) => {
+          pets.push({ id: docSnap.id, ...docSnap.data() } as PetData);
+        });
+        setUserPets(pets);
+
+        if (pets.length > 0) {
+          if (!activePetId || !pets.find(p => p.id === activePetId)) {
+            setActivePetId(pets[0].id); 
+          }
+          setShowPetSelectionScreen(false);
+          setIsNamingPet(false); 
+        } else {
+          setActivePetId(null);
+          setShowPetSelectionScreen(true); 
+          setIsNamingPet(false); 
+        }
+        setIsPetDataLoading(false);
+      }, (error) => {
+        console.error("Error fetching pets data:", error);
+        toast({ title: "Error", description: "Could not load your pets.", variant: "destructive" });
+        setUserPets([]);
+        setActivePetId(null);
+        setShowPetSelectionScreen(true);
+        setIsNamingPet(false);
+        setIsPetDataLoading(false);
+      });
+      return () => unsubscribe();
+    } else {
+      setUserPets([]);
+      setActivePetId(null);
+      setPetImage(PET_TYPES[0].images.default.url);
+      setPetImageHint(PET_TYPES[0].images.default.hint);
+      setPetMessage("Welcome to Pocket Pal! Sign in or create an account.");
+      setShowPetSelectionScreen(false);
+      setIsNamingPet(false);
+      setIsPetDataLoading(false);
+    }
+  }, [user, authLoading, toast, activePetId]);
+
   useEffect(() => {
     updatePetVisualsAndMessage();
   }, [currentActivePet, currentPetDefinition, updatePetVisualsAndMessage]);
@@ -229,39 +293,6 @@ export default function PocketPalPage() {
     }, STAT_DECREASE_INTERVAL);
     return () => clearInterval(intervalId);
   }, [user, currentActivePet, saveSinglePetData, showPetSelectionScreen, isNamingPet, activePetId]);
-
-  const callPetNeedsAI = useCallback(async () => {
-    if (!currentActivePet || isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
-      return;
-    }
-    setIsLoadingAi(true);
-    setLastAiCallTimestamp(Date.now());
-    try {
-      const assessmentInput: PetNeedsAssessmentInput = { 
-        hunger: currentActivePet.hunger, 
-        happiness: currentActivePet.happiness, 
-        cleanliness: currentActivePet.cleanliness 
-      };
-      setPetMessage("Thinking about what I need...");
-      const result = await petNeedsAssessment(assessmentInput);
-      setPetMessage(result.needs);
-      toast({
-        title: `${currentPetDisplayName} Says:`,
-        description: result.needs,
-        duration: 5000,
-      });
-    } catch (error) {
-      console.error("Error calling petNeedsAssessment:", error);
-      setPetMessage("Hmm, I'm not sure what I need right now. Maybe try an action?");
-      toast({
-        title: "Error",
-        description: "Could not get pet's needs. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingAi(false);
-    }
-  }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, toast, currentPetDisplayName]);
   
   useEffect(() => {
     if (!user || !currentActivePet || isLoadingAi || showPetSelectionScreen || isNamingPet) return;
@@ -269,6 +300,81 @@ export default function PocketPalPage() {
       callPetNeedsAI();
     }
   }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, callPetNeedsAI, user, showPetSelectionScreen, isNamingPet]);
+
+  // Notification Logic
+  useEffect(() => {
+    if (!user || !currentActivePet || notificationPermission !== 'granted' || showPetSelectionScreen || isNamingPet) {
+      return;
+    }
+
+    const loadNotifiedStates = () => {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const storedStatesRaw = localStorage.getItem(`notifiedActionStates_${user.uid}_${todayStr}`);
+      if (storedStatesRaw) {
+        setNotifiedActionStates(JSON.parse(storedStatesRaw));
+      } else {
+        // Clear states from previous days if any, or initialize for today
+        localStorage.removeItem(`notifiedActionStates_${user.uid}_${new Date(Date.now() - 86400000).toISOString().split('T')[0]}`); // Example for yesterday
+        setNotifiedActionStates({});
+      }
+    };
+    loadNotifiedStates();
+
+    const intervalId = setInterval(() => {
+      USER_ACTIONS.forEach(action => {
+        const petActionState = getActionStateForPet(action.id); // Firestore state
+        if (!petActionState.canPerform) return; // Already done max times
+
+        const todayStr = new Date().toISOString().split('T')[0];
+        let currentNotifiedState = notifiedActionStates[action.id] || { notifiedTodayCount: 0, lastNotifiedDate: '' };
+
+        // Reset if date changed
+        if (currentNotifiedState.lastNotifiedDate !== todayStr) {
+          currentNotifiedState = { notifiedTodayCount: 0, lastNotifiedDate: todayStr };
+        }
+        
+        const maxNotificationsForAction = action.frequencyPerDay - petActionState.countToday;
+
+        if (currentNotifiedState.notifiedTodayCount < maxNotificationsForAction && Math.random() < NOTIFICATION_PROBABILITY) {
+          let notificationTitle = "";
+          let notificationBody = "";
+
+          switch (action.id) {
+            case "drinkWater":
+              notificationTitle = `${currentPetDisplayName} is thirsty!`;
+              notificationBody = `Remember to stay hydrated. Have you had water recently? 💧`;
+              break;
+            case "eatenWell":
+              notificationTitle = `${currentPetDisplayName} is thinking of you!`;
+              notificationBody = `Have you had a good meal today? Your pal is waiting! 🍎`;
+              break;
+            case "proudOfYou":
+              notificationTitle = `${currentPetDisplayName} sends good vibes! ✨`;
+              notificationBody = `Time for a quick positive check-in?`;
+              break;
+            default:
+              notificationTitle = `A reminder from ${currentPetDisplayName}`;
+              notificationBody = action.question;
+          }
+          
+          const sent = sendNotification(notificationTitle, { body: notificationBody, icon: petImage });
+          if (sent) {
+            const newNotifiedCount = currentNotifiedState.notifiedTodayCount + 1;
+            const updatedNotifiedStates = {
+              ...notifiedActionStates,
+              [action.id]: { notifiedTodayCount: newNotifiedCount, lastNotifiedDate: todayStr }
+            };
+            setNotifiedActionStates(updatedNotifiedStates);
+            localStorage.setItem(`notifiedActionStates_${user.uid}_${todayStr}`, JSON.stringify(updatedNotifiedStates));
+          }
+        }
+      });
+    }, NOTIFICATION_CHECK_INTERVAL);
+
+    return () => clearInterval(intervalId);
+
+  }, [user, currentActivePet, notificationPermission, sendNotification, getActionStateForPet, notifiedActionStates, petImage, currentPetDisplayName, showPetSelectionScreen, isNamingPet]);
+
 
   const handleInteraction = (statUpdater: (prevPet: PetData) => Partial<PetData>, message: string, toastMessage: string) => {
     if (!currentActivePet || !user || showPetSelectionScreen || isNamingPet) return;
@@ -323,24 +429,6 @@ export default function PocketPalPage() {
     `You cleaned ${currentPetDisplayName}!`
   );
 
-  const getActionStateForPet = useCallback((actionId: string): { countToday: number; canPerform: boolean } => {
-    if (!currentActivePet || !USER_ACTIONS) return { countToday: 0, canPerform: false };
-
-    const actionDefinition = USER_ACTIONS.find(a => a.id === actionId);
-    if (!actionDefinition) return { countToday: 0, canPerform: false };
-
-    const todayStr = new Date().toISOString().split('T')[0];
-    const petActionState = currentActivePet.actionStates?.[actionId];
-
-    if (petActionState && petActionState.lastPerformedDate === todayStr) {
-      return {
-        countToday: petActionState.countToday,
-        canPerform: petActionState.countToday < actionDefinition.frequencyPerDay,
-      };
-    }
-    return { countToday: 0, canPerform: true };
-  }, [currentActivePet]);
-
   const handleUserActionInteract = (actionId: string, option: UserActionOption, choiceKey: 'yes' | 'no') => {
     if (!currentActivePet || !user) return;
 
@@ -379,7 +467,7 @@ export default function PocketPalPage() {
     toast({ description: feedbackMessage });
 
     if (option.popupMessage) {
-      setPopupMessage(option.popupMessage.replace('{PET_NAME}', currentPetDisplayName));
+      setPopupMessage(option.popupMessage.replace('{PET_NAME}', currentPetDisplayName).replace('gentle headpats... everything will be okay.',' gentle headpats... everything will be okay. '+currentPetDisplayName+' is here for you.'));
       setShowPopup(true);
     }
   };
@@ -414,10 +502,8 @@ export default function PocketPalPage() {
     };
 
     try {
-      setIsPetDataLoading(true); // Set loading true before Firestore operation
+      setIsPetDataLoading(true);
       const petDocRef = await addDoc(collection(db, "users", user.uid, "pets"), newPetFirestoreData);
-      // activePetId will be set by onSnapshot listener, which also sets isPetDataLoading to false.
-      // setShowPetSelectionScreen(false) and setIsNamingPet(false) will also be handled by onSnapshot.
       setIsNamingPet(false);
       setSpeciesForNaming(null);
       setNewPetNameInput("");
@@ -425,7 +511,7 @@ export default function PocketPalPage() {
     } catch (error) {
       console.error("Error creating new pet:", error);
       toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
-      setIsPetDataLoading(false); // Ensure loading is false on error
+      setIsPetDataLoading(false);
     }
   };
   
@@ -445,11 +531,27 @@ export default function PocketPalPage() {
   const handleAdoptNewPetClick = () => {
     if (userPets.length < MAX_PETS) {
       setShowPetSelectionScreen(true);
-      setIsNamingPet(false); // Ensure naming screen is not shown
+      setIsNamingPet(false);
     } else {
       toast({ title: "Max Pets Reached", description: `You already have ${MAX_PETS} pets.`, variant: "default"});
     }
   };
+
+  const handleRequestNotificationPermission = async () => {
+    if (notificationsSupported && notificationPermission === 'default') {
+      const result = await requestNotificationPermission();
+      if (result === 'granted') {
+        toast({ title: "Notifications Enabled", description: "You'll now receive reminders for your pet!" });
+      } else if (result === 'denied') {
+        toast({ title: "Notifications Denied", description: "You can enable notifications in your browser settings.", variant: "default" });
+      }
+    } else if (notificationPermission === 'granted') {
+        toast({ title: "Notifications Already Enabled", description: "You're all set for pet reminders!", variant: "default" });
+    } else if (notificationPermission === 'denied') {
+        toast({ title: "Notifications Blocked", description: "Please enable notifications in your browser settings to get reminders.", variant: "default" });
+    }
+  };
+
 
   const AuthArea = () => (
     <div className="absolute top-4 right-4 z-10">
@@ -457,11 +559,13 @@ export default function PocketPalPage() {
         <div className="flex items-center gap-2">
            {user.photoURL ? 
              <Image src={user.photoURL} alt="User avatar" width={32} height={32} className="rounded-full" /> :
-             <UserCircle size={32} />
+             <UserCircle size={24} className="sm:size-32" />
            }
-           <span className="text-sm text-foreground hidden sm:inline">{user.displayName || user.email}</span>
+           <span className="text-xs sm:text-sm text-foreground hidden md:inline">{user.displayName || user.email}</span>
           <Button variant="outline" size="sm" onClick={signOut} disabled={authLoading}>
-            <LogOut size={16} className="mr-1 sm:mr-2"/> Sign Out
+            <LogOut size={16} className="mr-1 sm:mr-2"/> 
+            <span className="hidden sm:inline">Sign Out</span>
+            <span className="sm:hidden">Out</span>
           </Button>
         </div>
       )}
@@ -469,39 +573,35 @@ export default function PocketPalPage() {
   );
 
   const PetSelectionUI = () => (
-    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-8">
+    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
       <CardHeader>
-        <CardTitle className="text-2xl font-bold text-center">Choose Your Pocket Pal!</CardTitle>
-        <CardDescription className="text-center">Select a species for your new companion.</CardDescription>
+        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Choose Your Pocket Pal!</CardTitle>
+        <CardDescription className="text-center text-xs sm:text-sm">Select a species for your new companion.</CardDescription>
       </CardHeader>
-      <CardContent className="p-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <CardContent className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
         {PET_TYPES.map((petDef) => (
           <Button 
             key={petDef.id} 
             onClick={() => handleSelectSpeciesForNaming(petDef)} 
-            className="w-full justify-start py-6 text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
+            className="w-full justify-start py-4 sm:py-6 text-sm sm:text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
             variant="outline"
             disabled={userPets.length >= MAX_PETS && !userPets.find(p => p.selectedPetTypeId === petDef.id)}
           >
             <Image 
               src={petDef.images.default.url} 
               alt={petDef.name} 
-              width={40} 
-              height={40} 
-              className="mb-2 sm:mb-0 sm:mr-4 rounded-md"
+              width={32} 
+              height={32} 
+              className="mb-2 sm:mb-0 sm:mr-4 rounded-md w-8 h-8 sm:w-10 sm:h-10"
               data-ai-hint={petDef.images.default.hint}
             />
             <span className="text-center sm:text-left">{petDef.name}</span>
           </Button>
         ))}
       </CardContent>
-       <CardFooter>
+       <CardFooter className="p-4">
         <Button variant="ghost" onClick={() => { 
             setShowPetSelectionScreen(false); 
-            if(userPets.length === 0 && user && !authLoading) {
-                // If user cancels initial pet selection and has no pets, effectively log them out or show a message.
-                // For now, just hiding selection. If they had no pets, main screen shows "Adopt First Pal".
-            }
         }} className="w-full">
             Cancel
         </Button>
@@ -510,25 +610,25 @@ export default function PocketPalPage() {
   );
 
   const PetNamingUI = () => (
-    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-8">
+    <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
       <CardHeader>
-        <CardTitle className="text-2xl font-bold text-center">Name Your New Pal!</CardTitle>
-        {speciesForNaming && <CardDescription className="text-center">You've chosen a {speciesForNaming.name}. What will you call it?</CardDescription>}
+        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Name Your New Pal!</CardTitle>
+        {speciesForNaming && <CardDescription className="text-center text-xs sm:text-sm">You've chosen a {speciesForNaming.name}. What will you call it?</CardDescription>}
       </CardHeader>
       <form onSubmit={handleNamePetSubmit}>
-        <CardContent className="p-6 space-y-4">
+        <CardContent className="p-4 sm:p-6 space-y-3 sm:space-y-4">
             {speciesForNaming && (
                  <Image 
                     src={speciesForNaming.images.default.url} 
                     alt={speciesForNaming.name} 
-                    width={100} 
-                    height={100} 
-                    className="mx-auto rounded-md mb-4"
+                    width={80} 
+                    height={80} 
+                    className="mx-auto rounded-md mb-3 sm:mb-4 w-20 h-20 sm:w-24 sm:h-24"
                     data-ai-hint={speciesForNaming.images.default.hint}
                 />
             )}
           <div>
-            <Label htmlFor="petName">Pet's Name</Label>
+            <Label htmlFor="petName" className="text-xs sm:text-sm">Pet's Name</Label>
             <Input 
               id="petName" 
               type="text" 
@@ -536,11 +636,11 @@ export default function PocketPalPage() {
               value={newPetNameInput} 
               onChange={(e) => setNewPetNameInput(e.target.value)} 
               required 
-              className="mt-1"
+              className="mt-1 text-sm sm:text-base"
             />
           </div>
         </CardContent>
-        <CardFooter className="flex justify-between p-4">
+        <CardFooter className="flex justify-between p-3 sm:p-4">
           <Button variant="ghost" type="button" onClick={() => { setIsNamingPet(false); setSpeciesForNaming(null); setShowPetSelectionScreen(true); }}>Back</Button>
           <Button type="submit" disabled={isPetDataLoading}>Adopt {newPetNameInput || "Pal"}!</Button>
         </CardFooter>
@@ -557,9 +657,9 @@ export default function PocketPalPage() {
             variant={pet.id === activePetId ? "default" : "outline"}
             onClick={() => setActivePetId(pet.id)}
             size="sm"
-            className="shadow-md"
+            className="shadow-md text-xs sm:text-sm"
           >
-            <PawPrint size={16} className="mr-2"/>
+            <PawPrint size={14} className="mr-1 sm:mr-2 sm:size-16" />
             {pet.petName}
           </Button>
         ))}
@@ -568,11 +668,10 @@ export default function PocketPalPage() {
   );
   
   if (authLoading || (user && isPetDataLoading && !currentActivePet && userPets.length === 0 && !showPetSelectionScreen && !isNamingPet)) {
-    // This covers initial auth load, and pet data load ONLY IF no pets yet determined and not in selection/naming flow
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30">
         { user && <AuthArea /> }
-        <Skeleton className="w-full max-w-lg h-[600px] rounded-xl" />
+        <Skeleton className="w-full max-w-xs sm:max-w-lg h-[400px] sm:h-[600px] rounded-xl" />
         <p className="mt-4 text-foreground">Loading your Pocket Pal...</p>
       </div>
     );
@@ -580,138 +679,145 @@ export default function PocketPalPage() {
   
   const mainContent = (
     <>
-      <Card className="w-full max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative">
-        <CardHeader className="text-center border-b border-border pb-4 pt-6">
-          <CardTitle className="text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground">
+      <Card className="w-full max-w-md sm:max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative">
+        <CardHeader className="text-center border-b border-border pb-3 pt-4 sm:pb-4 sm:pt-6">
+          <CardTitle className="text-3xl sm:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground">
             Pocket Pal
           </CardTitle>
           <AuthArea />
         </CardHeader>
 
         {!user ? (
-          <CardContent className="p-6 space-y-6">
-            <form onSubmit={handleAuthSubmit} className="space-y-4">
-              <CardTitle className="text-2xl font-bold text-center mb-4">
-                {authAction === 'signin' ? 'Sign In' : 'Create Account'}
-              </CardTitle>
-              {authAction === 'signup' && (
-                 <div>
-                    <Label htmlFor="username">Username</Label>
-                    <Input 
-                    id="username" 
-                    type="text" 
-                    placeholder="Your Username" 
-                    value={username} 
-                    onChange={(e) => setUsername(e.target.value)} 
-                    required 
-                    className="mt-1"
-                    />
-                </div>
-              )}
-              <div>
-                <Label htmlFor="email">Email</Label>
-                <Input 
-                  id="email" 
-                  type="email" 
-                  placeholder="you@example.com" 
-                  value={email} 
-                  onChange={(e) => setEmail(e.target.value)} 
-                  required 
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="password">Password</Label>
-                <Input 
-                  id="password" 
-                  type="password" 
-                  placeholder="••••••••" 
-                  value={password} 
-                  onChange={(e) => setPassword(e.target.value)} 
-                  required 
-                  className="mt-1"
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={authLoading}>
-                {authAction === 'signin' ? (
-                  <> <LogInIcon size={18} className="mr-2" /> Sign In </>
-                ) : (
-                  <> <UserPlus size={18} className="mr-2" /> Create Account </>
+          <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
+            <div className="flex flex-col items-center text-center">
+              <PetDisplay
+                petName={PET_TYPES[0].defaultName}
+                imageUrl={petImage}
+                altText={`Image of default pet`}
+                imageHint={petImageHint}
+                className="max-w-[180px] sm:max-w-[220px] mb-2 sm:mb-0" 
+              />
+              <h2 className="text-xl sm:text-2xl font-semibold text-foreground mt-3 sm:mt-4">Welcome to Pocket Pal!</h2>
+              <p className="text-xs sm:text-sm text-muted-foreground mt-1">
+                {petMessage.includes("Sign in") || petMessage.includes("Welcome") ? petMessage : "Sign in or create an account to meet your new friend."}
+              </p>
+            </div>
+
+            <div className="w-full">
+              <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-4">
+                <CardTitle className="text-lg sm:text-xl font-bold text-center mb-2">
+                  {authAction === 'signin' ? 'Sign In' : 'Create Account'}
+                </CardTitle>
+                {authAction === 'signup' && (
+                   <div>
+                      <Label htmlFor="username" className="text-xs sm:text-sm">Username</Label>
+                      <Input 
+                      id="username" 
+                      type="text" 
+                      placeholder="Your Username" 
+                      value={username} 
+                      onChange={(e) => setUsername(e.target.value)} 
+                      required 
+                      className="mt-1 text-sm sm:text-base"
+                      />
+                  </div>
                 )}
+                <div>
+                  <Label htmlFor="email" className="text-xs sm:text-sm">Email</Label>
+                  <Input 
+                    id="email" 
+                    type="email" 
+                    placeholder="you@example.com" 
+                    value={email} 
+                    onChange={(e) => setEmail(e.target.value)} 
+                    required 
+                    className="mt-1 text-sm sm:text-base"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="password" className="text-xs sm:text-sm">Password</Label>
+                  <Input 
+                    id="password" 
+                    type="password" 
+                    placeholder="••••••••" 
+                    value={password} 
+                    onChange={(e) => setPassword(e.target.value)} 
+                    required 
+                    className="mt-1 text-sm sm:text-base"
+                  />
+                </div>
+                <Button type="submit" className="w-full text-sm sm:text-base" disabled={authLoading}>
+                  {authAction === 'signin' ? (
+                    <> <LogInIcon size={16} className="mr-2 sm:size-18" /> Sign In </>
+                  ) : (
+                    <> <UserPlus size={16} className="mr-2 sm:size-18" /> Create Account </>
+                  )}
+                </Button>
+              </form>
+              <Button 
+                variant="link" 
+                className="w-full mt-2 text-xs sm:text-sm" 
+                onClick={() => setAuthAction(authAction === 'signin' ? 'signup' : 'signin')}
+              >
+                {authAction === 'signin' ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
               </Button>
-            </form>
-            <Button 
-              variant="link" 
-              className="w-full" 
-              onClick={() => setAuthAction(authAction === 'signin' ? 'signup' : 'signin')}
-            >
-              {authAction === 'signin' ? "Don't have an account? Sign Up" : "Already have an account? Sign In"}
-            </Button>
-            <PetDisplay
-              petName={PET_TYPES[0].defaultName}
-              imageUrl={petImage}
-              altText={`Image of default pet`}
-              imageHint={petImageHint}
-            />
-            <p className="text-lg text-foreground my-4 text-center">{petMessage}</p>
+            </div>
           </CardContent>
-        ) : showPetSelectionScreen ? ( // If user is logged in and this flag is true
+        ) : showPetSelectionScreen ? (
            <PetSelectionUI />
-        ) : isNamingPet ? ( // If user is logged in and this flag is true
+        ) : isNamingPet ? (
             <PetNamingUI />
         ) : !currentActivePet || !currentPetDefinition ? ( 
-          // This state means user is logged in, not in selection/naming, but no active pet yet.
-          // Could be because pets are still loading, or user has no pets.
-          <CardContent className="p-6 text-center min-h-[400px] flex flex-col justify-center items-center">
+          <CardContent className="p-4 sm:p-6 text-center min-h-[300px] sm:min-h-[400px] flex flex-col justify-center items-center">
             {isPetDataLoading ? (
               <>
-                <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
-                <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
-                <Skeleton className="w-1/2 h-6 mx-auto" />
-                <p className="mt-4 text-muted-foreground">Loading your Pal...</p>
+                <Skeleton className="w-32 h-32 sm:w-48 sm:h-48 rounded-full mx-auto mb-4" />
+                <Skeleton className="w-3/4 h-6 sm:h-8 mx-auto mb-2" />
+                <Skeleton className="w-1/2 h-4 sm:h-6 mx-auto" />
+                <p className="mt-4 text-muted-foreground text-xs sm:text-sm">Loading your Pal...</p>
               </>
             ) : (
-               // Not loading, and no active pet means user has no pets.
                <>
                  <PetDisplay
                     petName="No Pal Yet"
-                    imageUrl={PET_TYPES[0].images.default.url} // Generic image
+                    imageUrl={PET_TYPES[0].images.default.url} 
                     altText="No pet selected"
                     imageHint={PET_TYPES[0].images.default.hint}
+                    className="max-w-[180px] sm:max-w-[250px]"
                  />
-                 <p className="mt-4 text-muted-foreground">You don't have a Pocket Pal yet.</p>
-                 <Button onClick={handleAdoptNewPetClick} className="mt-4">Adopt First Pal</Button>
+                 <p className="mt-4 text-muted-foreground text-xs sm:text-sm">You don't have a Pocket Pal yet.</p>
+                 <Button onClick={handleAdoptNewPetClick} className="mt-4 text-sm sm:text-base">Adopt First Pal</Button>
                </>
             )}
           </CardContent>
-        ): ( // User is logged in, not in selection/naming, and has an active pet
+        ): (
           <>
-            <CardContent className="p-6 space-y-6">
+            <CardContent className="p-4 sm:p-6 space-y-4 sm:space-y-6">
               <PetDisplay
                 petName={currentPetDisplayName}
                 imageUrl={petImage}
                 altText={`Image of ${currentPetDisplayName}`}
-                imageHint={petImageHint}
+                imageHint={imageHint}
               />
 
-              <div className="space-y-3 pt-4">
-                <StatusIndicator label="Hunger" value={currentActivePet.hunger} icon={<Apple className="w-5 h-5" />} />
-                <StatusIndicator label="Happiness" value={currentActivePet.happiness} icon={<Smile className="w-5 h-5" />} />
-                <StatusIndicator label="Cleanliness" value={currentActivePet.cleanliness} icon={<Droplets className="w-5 h-5" />} />
+              <div className="space-y-2 sm:space-y-3 pt-2 sm:pt-4">
+                <StatusIndicator label="Hunger" value={currentActivePet.hunger} icon={<Apple className="w-4 h-4 sm:w-5 sm:h-5" />} />
+                <StatusIndicator label="Happiness" value={currentActivePet.happiness} icon={<Smile className="w-4 h-4 sm:w-5 sm:h-5" />} />
+                <StatusIndicator label="Cleanliness" value={currentActivePet.cleanliness} icon={<Droplets className="w-4 h-4 sm:w-5 sm:h-5" />} />
               </div>
 
               <Card className="bg-card/50 shadow-inner">
-                <CardHeader className="pb-2 pt-3 px-4">
-                    <CardDescription className="flex items-center text-sm text-muted-foreground">
-                        <Info size={16} className="mr-2 shrink-0"/>
+                <CardHeader className="pb-2 pt-2 sm:pt-3 px-3 sm:px-4">
+                    <CardDescription className="flex items-center text-xs sm:text-sm text-muted-foreground">
+                        <Info size={14} className="mr-2 shrink-0 sm:size-16"/>
                         {currentPetDisplayName} says:
                     </CardDescription>
                 </CardHeader>
-                <CardContent className="px-4 pb-3">
+                <CardContent className="px-3 sm:px-4 pb-2 sm:pb-3">
                   {(isLoadingAi && petMessage.startsWith("Thinking")) || (isPetDataLoading && !petMessage) ? (
-                    <Skeleton className="h-5 w-3/4 " /> 
+                    <Skeleton className="h-4 sm:h-5 w-3/4 " /> 
                   ) : (
-                    <p className="text-foreground text-center italic min-h-[2.5em] flex items-center justify-center">
+                    <p className="text-foreground text-xs sm:text-sm text-center italic min-h-[2em] sm:min-h-[2.5em] flex items-center justify-center">
                       {petMessage}
                     </p>
                   )}
@@ -733,9 +839,16 @@ export default function PocketPalPage() {
       
       {user && currentActivePet && !showPetSelectionScreen && !isNamingPet && (
         <>
-          <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN || isPetDataLoading} className="mt-4">
-            {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetDisplayName} need?`}
-          </Button>
+          <div className="flex flex-col sm:flex-row items-center gap-2 mt-4">
+            <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN || isPetDataLoading} className="w-full sm:w-auto text-xs sm:text-sm">
+              {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetDisplayName} need?`}
+            </Button>
+            {notificationsSupported && notificationPermission === 'default' && (
+                 <Button variant="outline" onClick={handleRequestNotificationPermission} className="w-full sm:w-auto text-xs sm:text-sm">
+                    <BellRing size={14} className="mr-1 sm:mr-2 sm:size-16" /> Enable Reminders
+                </Button>
+            )}
+           </div>
           <UserActionsDisplay 
             actions={USER_ACTIONS} 
             onActionInteract={handleUserActionInteract}
@@ -746,8 +859,8 @@ export default function PocketPalPage() {
       )}
 
       {user && userPets.length > 0 && userPets.length < MAX_PETS && !showPetSelectionScreen && !isNamingPet && !isPetDataLoading && (
-         <Button variant="secondary" onClick={handleAdoptNewPetClick} className="mt-4 shadow-md">
-            <PawPrint size={18} className="mr-2" /> Adopt Another Pal
+         <Button variant="secondary" onClick={handleAdoptNewPetClick} className="mt-4 shadow-md text-xs sm:text-sm">
+            <PawPrint size={16} className="mr-2 sm:size-18" /> Adopt Another Pal
           </Button>
       )}
       {user && !isPetDataLoading && <PetSwitcherUI />}
@@ -769,8 +882,9 @@ export default function PocketPalPage() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30 relative">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background p-2 sm:p-4 selection:bg-primary/30 relative">
       {mainContent}
     </div>
   );
 }
+

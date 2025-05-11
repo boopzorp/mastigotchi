@@ -1,3 +1,4 @@
+import type { LucideIcon } from "lucide-react";
 
 export interface UserActionOption {
   text: string;
@@ -11,7 +12,7 @@ export interface UserAction {
   frequencyPerDay: number;
   yesOption: UserActionOption;
   noOption: UserActionOption;
-  icon?: React.ElementType; // Optional: for a themed icon next to the action
+  icon?: LucideIcon; 
 }
 
 export const USER_ACTIONS: UserAction[] = [
@@ -21,14 +22,14 @@ export const USER_ACTIONS: UserAction[] = [
     frequencyPerDay: 3,
     yesOption: { text: "Yes!", happinessChange: 5 },
     noOption: { text: "Not yet", happinessChange: -10 },
-    // icon: Droplets, // Example if you want to use lucide icons
+    // icon: Droplets, 
   },
   {
     id: "eatenWell",
     question: "Are you hungry but still haven't eaten?",
     frequencyPerDay: 2,
-    yesOption: { text: "Yes, I am", happinessChange: -10 }, // User admits they are hungry & haven't eaten
-    noOption: { text: "No, I'm good", happinessChange: 7 },    // User says they are not hungry / have eaten
+    yesOption: { text: "Yes, I am", happinessChange: -10 }, 
+    noOption: { text: "No, I'm good", happinessChange: 7 },    
   },
   {
     id: "proudOfYou",
@@ -38,7 +39,7 @@ export const USER_ACTIONS: UserAction[] = [
     noOption: { 
       text: "No, I am overwhelmed", 
       happinessChange: -15, 
-      popupMessage: " gentle headpats... everything will be okay. "
+      popupMessage: "{PET_NAME} is here for you. Gentle headpats... everything will be okay." 
     },
   },
 ];

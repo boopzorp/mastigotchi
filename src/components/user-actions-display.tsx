@@ -1,10 +1,9 @@
-
 "use client";
 
 import type { UserAction, UserActionOption } from "@/config/userActions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ThumbsUp, ThumbsDown, HelpCircle } from "lucide-react"; // Example icons
+import { ThumbsUp, ThumbsDown, HelpCircle } from "lucide-react"; 
 
 interface UserActionsDisplayProps {
   actions: UserAction[];
@@ -19,40 +18,40 @@ export function UserActionsDisplay({ actions, onActionInteract, getActionState, 
   }
 
   return (
-    <div className="mt-6 w-full max-w-lg space-y-4">
-      <h3 className="text-xl font-semibold text-center text-foreground">Daily Check-ins for {petName}</h3>
+    <div className="mt-4 sm:mt-6 w-full max-w-lg space-y-3 sm:space-y-4">
+      <h3 className="text-lg sm:text-xl font-semibold text-center text-foreground">Daily Check-ins for {petName}</h3>
       {actions.map((action) => {
         const { canPerform, countToday } = getActionState(action.id);
         const IconComponent = action.icon || HelpCircle;
 
         return (
           <Card key={action.id} className="bg-card/70 shadow-md">
-            <CardHeader className="pb-3 pt-4">
-              <CardTitle className="text-md flex items-center">
-                <IconComponent size={20} className="mr-2 text-primary shrink-0" />
+            <CardHeader className="pb-2 sm:pb-3 pt-3 sm:pt-4 px-3 sm:px-4">
+              <CardTitle className="text-sm sm:text-base flex items-center">
+                <IconComponent size={18} className="mr-2 text-primary shrink-0 sm:size-20" />
                 {action.question}
               </CardTitle>
-              <CardDescription className="text-xs">
+              <CardDescription className="text-xs sm:text-xs">
                 Can perform: {action.frequencyPerDay - countToday} more time(s) today.
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex justify-around gap-2 pb-4">
+            <CardContent className="flex justify-around gap-2 px-3 sm:px-4 pb-3 sm:pb-4">
               <Button
                 onClick={() => onActionInteract(action.id, action.yesOption, 'yes')}
                 disabled={!canPerform}
                 variant="outline"
-                className="flex-1 bg-green-100 hover:bg-green-200 dark:bg-green-800 dark:hover:bg-green-700 border-green-300 dark:border-green-600 text-green-700 dark:text-green-200"
+                className="flex-1 border-primary/50 text-primary hover:bg-primary/10 focus:ring-primary text-xs sm:text-sm py-1.5 sm:py-2 h-auto"
               >
-                <ThumbsUp size={16} className="mr-2" />
+                <ThumbsUp size={14} className="mr-1 sm:mr-2 sm:size-16" />
                 {action.yesOption.text}
               </Button>
               <Button
                 onClick={() => onActionInteract(action.id, action.noOption, 'no')}
                 disabled={!canPerform}
                 variant="outline"
-                className="flex-1 bg-red-100 hover:bg-red-200 dark:bg-red-800 dark:hover:bg-red-700 border-red-300 dark:border-red-600 text-red-700 dark:text-red-200"
+                className="flex-1 border-destructive/50 text-destructive hover:bg-destructive/10 focus:ring-destructive text-xs sm:text-sm py-1.5 sm:py-2 h-auto"
               >
-                <ThumbsDown size={16} className="mr-2" />
+                <ThumbsDown size={14} className="mr-1 sm:mr-2 sm:size-16" />
                 {action.noOption.text}
               </Button>
             </CardContent>
