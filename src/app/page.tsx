@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useCallback, type FormEvent, useRef } from "react";
@@ -315,23 +316,25 @@ export default function PocketPalPage() {
   useEffect(() => {
     if (user && activePetId) {
       const todayStr = new Date().toISOString().split('T')[0];
-      const storageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
+      const currentDayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
+  
+      // Load states for today
+      let loadedStates: Record<string, NotifiedActionState> = {};
       try {
-          const storedStatesRaw = localStorage.getItem(storageKey);
-          let initialStates = {};
-          if (storedStatesRaw) {
-              initialStates = JSON.parse(storedStatesRaw);
-          }
-          if (JSON.stringify(initialStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
-              setNotifiedActionStates(initialStates);
-          }
+        const storedStatesRaw = localStorage.getItem(currentDayStorageKey);
+        if (storedStatesRaw) {
+          loadedStates = JSON.parse(storedStatesRaw);
+        }
       } catch (e) {
-          console.error("Error accessing localStorage for notifiedActionStates:", e);
-          if (JSON.stringify({}) !== JSON.stringify(notifiedActionStatesRef.current)) {
-             setNotifiedActionStates({}); // Reset to empty if localStorage fails
-          }
+        console.error("Error accessing localStorage for notifiedActionStates:", e);
       }
-
+      
+      // Only update state if it's different from the current state to prevent loops
+      if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
+        setNotifiedActionStates(loadedStates);
+      }
+  
+      // Clean up yesterday's states (optional, good for hygiene)
       const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
       const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
       try {
@@ -339,12 +342,14 @@ export default function PocketPalPage() {
       } catch (e) {
         console.error("Error removing yesterday's notifiedActionStates from localStorage:", e);
       }
-
+  
     } else {
+      // If no user or active pet, clear the states if they are not already empty
       if (Object.keys(notifiedActionStatesRef.current).length > 0) {
-           setNotifiedActionStates({});
+        setNotifiedActionStates({});
       }
     }
+  // Deliberately keeping dependencies minimal to avoid re-triggering unless user/pet changes or on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, activePetId]);
 
@@ -735,21 +740,7 @@ export default function PocketPalPage() {
 
         {!user ? (
           <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
-             <div className="flex flex-col items-center text-center mb-4">
-              <PetDisplay
-                petName={PET_TYPES[0].defaultName}
-                imageUrl={petImage}
-                altText={`Image of default pet`}
-                imageHint={petImageHint || PET_TYPES[0].images.default.hint}
-                className="max-w-[180px] sm:max-w-[220px] mb-2 sm:mb-0" 
-              />
-              <h2 className="text-xl sm:text-2xl font-semibold text-foreground mt-3 sm:mt-4">Welcome to Pawtchi Pal!</h2>
-              <p className="text-xs sm:text-sm text-muted-foreground mt-1">
-                {petMessage.includes("Sign in") || petMessage.includes("Welcome") ? petMessage : "Sign in or create an account to meet your new friend."}
-              </p>
-            </div>
-
-            <div className="w-full">
+            <div className="w-full mt-4">
               <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-4">
                 <CardTitle className="text-lg sm:text-xl font-bold text-center mb-2">
                   {authAction === 'signin' ? 'Sign In' : 'Create Account'}
@@ -817,7 +808,7 @@ export default function PocketPalPage() {
           <CardContent className="p-4 sm:p-6 text-center min-h-[300px] sm:min-h-[400px] flex flex-col justify-center items-center">
             {isPetDataLoading ? (
               <>
-                <Skeleton className="w-32 h-32 sm:w-48 sm:h-48 rounded-lg mx-auto mb-4" />
+                <Skeleton className="w-36 h-36 sm:w-48 sm:h-48 rounded-lg mx-auto mb-4" />
                 <Skeleton className="w-3/4 h-6 sm:h-8 mx-auto mb-2" />
                 <Skeleton className="w-1/2 h-4 sm:h-6 mx-auto" />
                 <p className="mt-4 text-muted-foreground text-xs sm:text-sm">Loading your Pal...</p>
@@ -829,7 +820,7 @@ export default function PocketPalPage() {
                     imageUrl={PET_TYPES[0].images.default.url} 
                     altText="No pet selected"
                     imageHint={petImageHint || PET_TYPES[0].images.default.hint}
-                    className="max-w-[180px] sm:max-w-[250px]"
+                    className="max-w-[200px] sm:max-w-xs md:max-w-sm" 
                  />
                  <p className="mt-4 text-muted-foreground text-xs sm:text-sm">{petMessage}</p>
                  <Button onClick={handleAdoptNewPetClick} className="mt-4 text-sm sm:text-base">Adopt First Pal</Button>
@@ -934,3 +925,4 @@ export default function PocketPalPage() {
     </div>
   );
 }
+
