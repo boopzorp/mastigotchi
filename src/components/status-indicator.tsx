@@ -1,3 +1,4 @@
+
 "use client";
 
 import { Progress } from "@/components/ui/progress";
@@ -11,11 +12,17 @@ interface StatusIndicatorProps {
 }
 
 export function StatusIndicator({ label, value, icon, className }: StatusIndicatorProps) {
-  let progressColorClass = "bg-primary"; // Default green
+  let progressColorClass = "bg-primary"; // Default green (theme primary)
   if (value < 30) {
-    progressColorClass = "bg-destructive"; // Red for low status
+    progressColorClass = "bg-destructive"; // Red for low status (theme destructive)
   } else if (value < 60) {
-    progressColorClass = "bg-yellow-500"; // Yellow for medium status - Note: Using a direct Tailwind color here as an example if not in theme
+    // Using a CSS variable for medium status that can be themed
+    // We'll assume --warning or similar could be added to globals.css if needed,
+    // or use accent for now.
+    // For now, let's use a slightly less vibrant primary or a specific theme variable if available.
+    // Using accent for medium status, which is light pastel green by default.
+    progressColorClass = "bg-accent-foreground"; // Or another theme color like 'bg-secondary' or 'bg-yellow-500' if defined in theme
+                                          // For now, choosing accent-foreground which is a darker green on the light green accent
   }
 
 
@@ -28,7 +35,12 @@ export function StatusIndicator({ label, value, icon, className }: StatusIndicat
         </div>
         <span className="text-sm font-semibold text-foreground">{value}%</span>
       </div>
-      <Progress value={value} aria-label={`${label} level: ${value}%`} className="h-3 [&>div]:transition-all [&>div]:duration-500" indicatorClassName={progressColorClass} />
+      <Progress 
+        value={value} 
+        aria-label={`${label} level: ${value}%`} 
+        className="h-3 [&>div]:transition-all [&>div]:duration-500" 
+        indicatorClassName={progressColorClass} 
+      />
     </div>
   );
 }
