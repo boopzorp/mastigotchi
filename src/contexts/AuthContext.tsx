@@ -1,10 +1,10 @@
-
 "use client";
 
 import type { User } from 'firebase/auth';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { auth, googleProvider } from '@/lib/firebase';
 import { signInWithPopup, signOut as firebaseSignOut, onAuthStateChanged } from 'firebase/auth';
+import { useToast } from "@/hooks/use-toast";
 
 interface AuthContextType {
   user: User | null;
@@ -18,6 +18,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -31,12 +32,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       await signInWithPopup(auth, googleProvider);
-      // onAuthStateChanged will handle setting the user
-    } catch (error) {
+      // onAuthStateChanged will handle setting the user and setLoading(false) on success
+    } catch (error: any) {
       console.error("Error signing in with Google:", error);
-      // Handle error (e.g., show a toast message)
-    } finally {
-      // setLoading(false); // onAuthStateChanged will set loading to false
+      toast({
+        title: "Sign-In Error",
+        description: error.message || "Could not sign in with Google. Please check your connection or Firebase setup.",
+        variant: "destructive",
+      });
+      setLoading(false); // Ensure loading is false if an error occurs
     }
   };
 
@@ -44,12 +48,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true);
     try {
       await firebaseSignOut(auth);
-      setUser(null);
-    } catch (error) {
+      // onAuthStateChanged will handle setting user to null and setLoading(false)
+    } catch (error: any) {
       console.error("Error signing out:", error);
-      // Handle error
-    } finally {
-      setLoading(false);
+      toast({
+        title: "Sign-Out Error",
+        description: error.message || "Could not sign out. Please try again.",
+        variant: "destructive",
+      });
+      setLoading(false); // Ensure loading is false if an error occurs
     }
   };
 
