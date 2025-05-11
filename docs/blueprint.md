@@ -1,4 +1,4 @@
-# **App Name**: Pawtchi Pal
+# **App Name**: mastigotchi
 
 ## Core Features:
 

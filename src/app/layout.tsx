@@ -24,7 +24,7 @@ const gamjaFlower = GamjaFlowerFont({
 });
 
 export const metadata: Metadata = {
-  title: 'Pawtchi Pal',
+  title: 'mastigotchi',
   description: 'Your cute and cuddly virtual pet companion!',
 };
 

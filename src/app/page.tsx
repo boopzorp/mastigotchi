@@ -68,7 +68,7 @@ export default function PocketPalPage() {
   
   const [petImage, setPetImage] = useState(PET_TYPES[0].images.default.url);
   const [petImageHint, setPetImageHint] = useState(PET_TYPES[0].images.default.hint);
-  const [petMessage, setPetMessage] = useState("Welcome to Pawtchi Pal!");
+  const [petMessage, setPetMessage] = useState("Welcome to mastigotchi!");
   
   const [isLoadingAi, setIsLoadingAi] = useState(false);
   const [lastAiCallTimestamp, setLastAiCallTimestamp] = useState(0);
@@ -114,21 +114,21 @@ export default function PocketPalPage() {
   const updatePetVisualsAndMessage = useCallback(() => {
     const defaultPetImageDetails = PET_TYPES[0].images.default;
     if (!currentActivePet || !currentPetDefinition) {
-      if (!user) {
-         setPetImage(defaultPetImageDetails.url);
-         setPetImageHint(defaultPetImageDetails.hint);
-         setPetMessage("Sign in or create an account to get a Pawtchi Pal!");
-      } else if (showPetSelectionScreen) {
-         setPetImage(defaultPetImageDetails.url);
-         setPetImageHint(defaultPetImageDetails.hint);
-         setPetMessage("Choose your first Pawtchi Pal!");
-      } else if (isNamingPet && speciesForNaming) {
+      if (!user) { // User not signed in
+         setPetImage(""); // No image for auth screen
+         setPetImageHint("");
+         setPetMessage(""); // No message for auth screen
+      } else if (showPetSelectionScreen) { // User signed in, selecting pet
+         setPetImage(""); // No specific pet image during selection
+         setPetImageHint("");
+         setPetMessage("Choose your first mastigotchi!");
+      } else if (isNamingPet && speciesForNaming) { // User signed in, naming pet
         setPetImage(speciesForNaming.images.default.url);
         setPetImageHint(speciesForNaming.images.default.hint);
         setPetMessage(`What will you name your new ${speciesForNaming.name}?`);
-      } else {
-        setPetImage(defaultPetImageDetails.url);
-        setPetImageHint(defaultPetImageDetails.hint);
+      } else { // User signed in, no active pet yet (e.g., data loading or no pets)
+        setPetImage(""); // No specific pet image
+        setPetImageHint("");
         setPetMessage("Loading your Pal or adopt one!");
       }
       return;
@@ -151,7 +151,7 @@ export default function PocketPalPage() {
     } else if (happiness > 90 && hunger > 80 && cleanliness > 80) {
       currentImageSet = images.content;
       message = `${currentActivePet.petName} is feeling great! Thanks to you!`;
-    } else {
+    } else { // Default to happy if not fitting other criteria explicitly.
       currentImageSet = images.happy; 
     }
     
@@ -255,9 +255,9 @@ export default function PocketPalPage() {
     } else {
       setUserPets([]);
       setActivePetId(null);
-      setPetImage(PET_TYPES[0].images.default.url);
-      setPetImageHint(PET_TYPES[0].images.default.hint);
-      setPetMessage("Welcome to Pawtchi Pal! Sign in or create an account.");
+      setPetImage(""); // No pet image when logged out
+      setPetImageHint("");
+      setPetMessage(""); // No message when logged out
       setShowPetSelectionScreen(false);
       setIsNamingPet(false);
       setIsPetDataLoading(false);
@@ -317,11 +317,10 @@ export default function PocketPalPage() {
     if (user && activePetId) {
       const todayStr = new Date().toISOString().split('T')[0];
       const currentDayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
-  
-      // Load states for today
+      
       let loadedStates: Record<string, NotifiedActionState> = {};
       try {
-        const storedStatesRaw = localStorage.getItem(currentDayStorageKey);
+        const storedStatesRaw = typeof window !== 'undefined' ? localStorage.getItem(currentDayStorageKey) : null;
         if (storedStatesRaw) {
           loadedStates = JSON.parse(storedStatesRaw);
         }
@@ -329,27 +328,22 @@ export default function PocketPalPage() {
         console.error("Error accessing localStorage for notifiedActionStates:", e);
       }
       
-      // Only update state if it's different from the current state to prevent loops
       if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
         setNotifiedActionStates(loadedStates);
       }
   
-      // Clean up yesterday's states (optional, good for hygiene)
       const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
       const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
       try {
-        localStorage.removeItem(yesterdayStorageKey);
+        if (typeof window !== 'undefined') localStorage.removeItem(yesterdayStorageKey);
       } catch (e) {
         console.error("Error removing yesterday's notifiedActionStates from localStorage:", e);
       }
-  
     } else {
-      // If no user or active pet, clear the states if they are not already empty
       if (Object.keys(notifiedActionStatesRef.current).length > 0) {
         setNotifiedActionStates({});
       }
     }
-  // Deliberately keeping dependencies minimal to avoid re-triggering unless user/pet changes or on mount
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, activePetId]);
 
@@ -409,7 +403,7 @@ export default function PocketPalPage() {
                 [action.id]: updatedNotifiedActionState
               };
               try {
-                localStorage.setItem(currentDayStorageKey, JSON.stringify(newOverallStates));
+                if (typeof window !== 'undefined') localStorage.setItem(currentDayStorageKey, JSON.stringify(newOverallStates));
               } catch (e) {
                  console.error("Error saving notifiedActionStates to localStorage:", e);
               }
@@ -624,7 +618,7 @@ export default function PocketPalPage() {
   const PetSelectionUI = () => (
     <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
       <CardHeader>
-        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Choose Your Pawtchi Pal!</CardTitle>
+        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Choose Your mastigotchi!</CardTitle>
         <CardDescription className="text-center text-xs sm:text-sm">Select a species for your new companion.</CardDescription>
       </CardHeader>
       <CardContent className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -632,7 +626,7 @@ export default function PocketPalPage() {
           <Button 
             key={petDef.id} 
             onClick={() => handleSelectSpeciesForNaming(petDef)} 
-            className="w-full justify-start py-4 sm:py-6 text-sm sm:text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
+            className="w-full justify-center py-4 sm:py-6 text-sm sm:text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
             variant="outline"
             disabled={userPets.length >= MAX_PETS && !userPets.find(p => p.selectedPetTypeId === petDef.id)}
           >
@@ -651,9 +645,10 @@ export default function PocketPalPage() {
        <CardFooter className="p-4">
         <Button variant="ghost" onClick={() => { 
             setShowPetSelectionScreen(false); 
-             if (userPets.length === 0 && !activePetId) {
-                setPetMessage("Adopt a Pawtchi Pal to begin your journey!");
-            }
+             if (userPets.length === 0 && !activePetId) { // Check if user has no pets at all
+                // If no pets, they must adopt one, so don't change message or re-route to "loading"
+                // Instead, message will be "Adopt a mastigotchi..." from main logic
+             }
         }} className="w-full">
             Cancel
         </Button>
@@ -724,7 +719,7 @@ export default function PocketPalPage() {
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30 relative">
         { user && <AuthArea /> }
         <Skeleton className="w-full max-w-xs sm:max-w-lg h-[400px] sm:h-[600px] rounded-xl" />
-        <p className="mt-4 text-foreground">Loading your Pawtchi Pal...</p>
+        <p className="mt-4 text-foreground">Loading your mastigotchi...</p>
       </div>
     );
   }
@@ -734,12 +729,13 @@ export default function PocketPalPage() {
       <Card className="w-full max-w-md sm:max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative mt-12 sm:mt-16">
         <CardHeader className="text-center border-b border-border pb-3 pt-4 sm:pb-4 sm:pt-6">
           <CardTitle className="text-3xl sm:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground font-gamja">
-            Pawtchi Pal
+            mastigotchi
           </CardTitle>
         </CardHeader>
 
         {!user ? (
           <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
+            {/* Removed PetDisplay from here */}
             <div className="w-full mt-4">
               <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-4">
                 <CardTitle className="text-lg sm:text-xl font-bold text-center mb-2">
@@ -819,7 +815,7 @@ export default function PocketPalPage() {
                     petName="No Pal Yet"
                     imageUrl={PET_TYPES[0].images.default.url} 
                     altText="No pet selected"
-                    imageHint={petImageHint || PET_TYPES[0].images.default.hint}
+                    imageHint={petImageHint || PET_TYPES[0].images.default.hint} // Use state for imageHint
                     className="max-w-[200px] sm:max-w-xs md:max-w-sm" 
                  />
                  <p className="mt-4 text-muted-foreground text-xs sm:text-sm">{petMessage}</p>
@@ -919,7 +915,7 @@ export default function PocketPalPage() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-background p-2 sm:p-4 selection:bg-primary/30 relative">
+    <div className="min-h-screen flex flex-col items-center justify-start pt-8 sm:pt-12 bg-background p-2 sm:p-4 selection:bg-primary/30 relative">
       <AuthArea />
       {mainContent}
     </div>
