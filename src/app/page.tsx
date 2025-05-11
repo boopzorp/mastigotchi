@@ -67,7 +67,7 @@ export default function PocketPalPage() {
   
   const [petImage, setPetImage] = useState(PET_TYPES[0].images.default.url);
   const [petImageHint, setPetImageHint] = useState(PET_TYPES[0].images.default.hint);
-  const [petMessage, setPetMessage] = useState("Welcome to Pocket Pal!");
+  const [petMessage, setPetMessage] = useState("Welcome to Pawtchi Pal!");
   
   const [isLoadingAi, setIsLoadingAi] = useState(false);
   const [lastAiCallTimestamp, setLastAiCallTimestamp] = useState(0);
@@ -111,23 +111,21 @@ export default function PocketPalPage() {
   }, [user, toast]);
 
   const updatePetVisualsAndMessage = useCallback(() => {
+    const defaultPetImageDetails = PET_TYPES[0].images.default;
     if (!currentActivePet || !currentPetDefinition) {
-      const defaultPetImageDetails = PET_TYPES[0].images.default;
       if (!user) {
          setPetImage(defaultPetImageDetails.url);
          setPetImageHint(defaultPetImageDetails.hint);
-         setPetMessage("Sign in or create an account to get a Pocket Pal!");
+         setPetMessage("Sign in or create an account to get a Pawtchi Pal!");
       } else if (showPetSelectionScreen) {
          setPetImage(defaultPetImageDetails.url);
          setPetImageHint(defaultPetImageDetails.hint);
-         setPetMessage("Choose your first Pocket Pal!");
+         setPetMessage("Choose your first Pawtchi Pal!");
       } else if (isNamingPet && speciesForNaming) {
         setPetImage(speciesForNaming.images.default.url);
         setPetImageHint(speciesForNaming.images.default.hint);
         setPetMessage(`What will you name your new ${speciesForNaming.name}?`);
       } else {
-        // User is logged in, no active pet, not selecting/naming
-        // This case happens if data is still loading or no pets exist yet
         setPetImage(defaultPetImageDetails.url);
         setPetImageHint(defaultPetImageDetails.hint);
         setPetMessage("Loading your Pal or adopt one!");
@@ -258,7 +256,7 @@ export default function PocketPalPage() {
       setActivePetId(null);
       setPetImage(PET_TYPES[0].images.default.url);
       setPetImageHint(PET_TYPES[0].images.default.hint);
-      setPetMessage("Welcome to Pocket Pal! Sign in or create an account.");
+      setPetMessage("Welcome to Pawtchi Pal! Sign in or create an account.");
       setShowPetSelectionScreen(false);
       setIsNamingPet(false);
       setIsPetDataLoading(false);
@@ -314,34 +312,38 @@ export default function PocketPalPage() {
   }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, callPetNeedsAI, user, showPetSelectionScreen, isNamingPet]);
 
 
-  // Effect for loading notified states from localStorage for the current pet
   useEffect(() => {
     if (user && activePetId) {
       const todayStr = new Date().toISOString().split('T')[0];
       const storageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
-      const storedStatesRaw = localStorage.getItem(storageKey);
-      
-      let initialStates = {};
-      if (storedStatesRaw) {
-        try {
-          initialStates = JSON.parse(storedStatesRaw);
-        } catch (e) {
-          console.error("Error parsing notifiedActionStates from localStorage:", e);
-        }
-      }
-      
-      if (JSON.stringify(initialStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
-          setNotifiedActionStates(initialStates);
+      try {
+          const storedStatesRaw = localStorage.getItem(storageKey);
+          let initialStates = {};
+          if (storedStatesRaw) {
+              initialStates = JSON.parse(storedStatesRaw);
+          }
+          if (JSON.stringify(initialStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
+              setNotifiedActionStates(initialStates);
+          }
+      } catch (e) {
+          console.error("Error accessing localStorage for notifiedActionStates:", e);
+          if (JSON.stringify({}) !== JSON.stringify(notifiedActionStatesRef.current)) {
+             setNotifiedActionStates({}); // Reset to empty if localStorage fails
+          }
       }
 
       const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
       const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
-      localStorage.removeItem(yesterdayStorageKey);
+      try {
+        localStorage.removeItem(yesterdayStorageKey);
+      } catch (e) {
+        console.error("Error removing yesterday's notifiedActionStates from localStorage:", e);
+      }
 
     } else {
-        if (Object.keys(notifiedActionStatesRef.current).length > 0) {
-            setNotifiedActionStates({});
-        }
+      if (Object.keys(notifiedActionStatesRef.current).length > 0) {
+           setNotifiedActionStates({});
+      }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, activePetId]);
@@ -401,7 +403,11 @@ export default function PocketPalPage() {
                 ...prevNotifiedStates,
                 [action.id]: updatedNotifiedActionState
               };
-              localStorage.setItem(currentDayStorageKey, JSON.stringify(newOverallStates));
+              try {
+                localStorage.setItem(currentDayStorageKey, JSON.stringify(newOverallStates));
+              } catch (e) {
+                 console.error("Error saving notifiedActionStates to localStorage:", e);
+              }
               return newOverallStates;
             }
           }
@@ -542,7 +548,6 @@ export default function PocketPalPage() {
     try {
       setIsPetDataLoading(true);
       await addDoc(collection(db, "users", user.uid, "pets"), newPetFirestoreData);
-      // onSnapshot will update userPets and trigger UI changes, including setting activePetId if it's the first pet.
       setIsNamingPet(false);
       setSpeciesForNaming(null);
       setNewPetNameInput("");
@@ -550,7 +555,7 @@ export default function PocketPalPage() {
     } catch (error) {
       console.error("Error creating new pet:", error);
       toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
-      setIsPetDataLoading(false); // Ensure loading state is reset on error
+      setIsPetDataLoading(false); 
     }
   };
   
@@ -614,7 +619,7 @@ export default function PocketPalPage() {
   const PetSelectionUI = () => (
     <Card className="w-full max-w-md shadow-2xl rounded-xl overflow-hidden bg-card mt-4 sm:mt-8">
       <CardHeader>
-        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Choose Your Pocket Pal!</CardTitle>
+        <CardTitle className="text-xl sm:text-2xl font-bold text-center">Choose Your Pawtchi Pal!</CardTitle>
         <CardDescription className="text-center text-xs sm:text-sm">Select a species for your new companion.</CardDescription>
       </CardHeader>
       <CardContent className="p-4 sm:p-6 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -641,9 +646,8 @@ export default function PocketPalPage() {
        <CardFooter className="p-4">
         <Button variant="ghost" onClick={() => { 
             setShowPetSelectionScreen(false); 
-            // If user cancels selection and has no pets, this might need to redirect or show appropriate message
-            if (userPets.length === 0) {
-                 // Potentially set a message or go back to a state that prompts adoption
+             if (userPets.length === 0 && !activePetId) {
+                setPetMessage("Adopt a Pawtchi Pal to begin your journey!");
             }
         }} className="w-full">
             Cancel
@@ -715,32 +719,31 @@ export default function PocketPalPage() {
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30 relative">
         { user && <AuthArea /> }
         <Skeleton className="w-full max-w-xs sm:max-w-lg h-[400px] sm:h-[600px] rounded-xl" />
-        <p className="mt-4 text-foreground">Loading your Pocket Pal...</p>
+        <p className="mt-4 text-foreground">Loading your Pawtchi Pal...</p>
       </div>
     );
   }
   
   const mainContent = (
     <>
-      <Card className="w-full max-w-md sm:max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative mt-12 sm:mt-16"> {/* Added margin-top to avoid overlap with AuthArea */}
+      <Card className="w-full max-w-md sm:max-w-lg shadow-2xl rounded-xl overflow-hidden bg-card relative mt-12 sm:mt-16">
         <CardHeader className="text-center border-b border-border pb-3 pt-4 sm:pb-4 sm:pt-6">
-          <CardTitle className="text-3xl sm:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground">
-            Pocket Pal
+          <CardTitle className="text-3xl sm:text-4xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent-foreground font-gamja">
+            Pawtchi Pal
           </CardTitle>
-          {/* AuthArea is now outside this Card, rendered directly in page layout */}
         </CardHeader>
 
         {!user ? (
           <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
-             <div className="flex flex-col items-center text-center mb-4"> {/* Added mb-4 */}
+             <div className="flex flex-col items-center text-center mb-4">
               <PetDisplay
                 petName={PET_TYPES[0].defaultName}
                 imageUrl={petImage}
                 altText={`Image of default pet`}
-                imageHint={petImageHint}
+                imageHint={petImageHint || PET_TYPES[0].images.default.hint}
                 className="max-w-[180px] sm:max-w-[220px] mb-2 sm:mb-0" 
               />
-              <h2 className="text-xl sm:text-2xl font-semibold text-foreground mt-3 sm:mt-4">Welcome to Pocket Pal!</h2>
+              <h2 className="text-xl sm:text-2xl font-semibold text-foreground mt-3 sm:mt-4">Welcome to Pawtchi Pal!</h2>
               <p className="text-xs sm:text-sm text-muted-foreground mt-1">
                 {petMessage.includes("Sign in") || petMessage.includes("Welcome") ? petMessage : "Sign in or create an account to meet your new friend."}
               </p>
@@ -814,7 +817,7 @@ export default function PocketPalPage() {
           <CardContent className="p-4 sm:p-6 text-center min-h-[300px] sm:min-h-[400px] flex flex-col justify-center items-center">
             {isPetDataLoading ? (
               <>
-                <Skeleton className="w-32 h-32 sm:w-48 sm:h-48 rounded-full mx-auto mb-4" />
+                <Skeleton className="w-32 h-32 sm:w-48 sm:h-48 rounded-lg mx-auto mb-4" />
                 <Skeleton className="w-3/4 h-6 sm:h-8 mx-auto mb-2" />
                 <Skeleton className="w-1/2 h-4 sm:h-6 mx-auto" />
                 <p className="mt-4 text-muted-foreground text-xs sm:text-sm">Loading your Pal...</p>
@@ -825,10 +828,10 @@ export default function PocketPalPage() {
                     petName="No Pal Yet"
                     imageUrl={PET_TYPES[0].images.default.url} 
                     altText="No pet selected"
-                    imageHint={PET_TYPES[0].images.default.hint || "default pet"}
+                    imageHint={petImageHint || PET_TYPES[0].images.default.hint}
                     className="max-w-[180px] sm:max-w-[250px]"
                  />
-                 <p className="mt-4 text-muted-foreground text-xs sm:text-sm">You don't have a Pocket Pal yet.</p>
+                 <p className="mt-4 text-muted-foreground text-xs sm:text-sm">{petMessage}</p>
                  <Button onClick={handleAdoptNewPetClick} className="mt-4 text-sm sm:text-base">Adopt First Pal</Button>
                </>
             )}
@@ -906,7 +909,7 @@ export default function PocketPalPage() {
             <PawPrint size={16} className="mr-2 sm:size-18" /> Adopt Another Pal
           </Button>
       )}
-      {user && !isPetDataLoading && userPets.length > 0 && <PetSwitcherUI />} {/* Only show switcher if pets exist */}
+      {user && !isPetDataLoading && userPets.length > 0 && <PetSwitcherUI />}
 
       <AlertDialog open={showPopup} onOpenChange={setShowPopup}>
         <AlertDialogContent>

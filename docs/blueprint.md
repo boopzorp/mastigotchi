@@ -1,4 +1,4 @@
-# **App Name**: Pocket Pal
+# **App Name**: Pawtchi Pal
 
 ## Core Features:
 

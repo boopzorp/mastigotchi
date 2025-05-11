@@ -1,6 +1,7 @@
 
 import type {Metadata} from 'next';
-import {Geist, Geist_Mono} from 'next/font/google';
+import { Geist, Geist_Mono } from 'next/font/google';
+import { Gamja_Flower as GamjaFlowerFont } from 'next/font/google';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster";
 import { AuthProvider } from '@/contexts/AuthContext';
@@ -15,8 +16,15 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
+const gamjaFlower = GamjaFlowerFont({
+  subsets: ['latin'],
+  weight: ['400'], // Gamja Flower typically only has 400 weight
+  variable: '--font-gamja-flower',
+  display: 'swap',
+});
+
 export const metadata: Metadata = {
-  title: 'Pocket Pal',
+  title: 'Pawtchi Pal',
   description: 'Your cute and cuddly virtual pet companion!',
 };
 
@@ -27,7 +35,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${gamjaFlower.variable} antialiased`}>
         <AuthProvider>
           {children}
           <Toaster />
