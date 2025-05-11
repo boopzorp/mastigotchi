@@ -14,7 +14,7 @@ import { UserActionsDisplay } from "@/components/user-actions-display";
 import { USER_ACTIONS, type UserAction, type UserActionOption } from "@/config/userActions";
 import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { petNeedsAssessment, PetNeedsAssessmentInput } from "@/ai/flows/pet-needs-assessment";
-import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint, BellRing } from "lucide-react";
+import { Apple, Smile, Droplets, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint, BellRing } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
@@ -843,7 +843,7 @@ export default function PocketPalPage() {
               <Card className="bg-card/50 shadow-inner">
                 <CardHeader className="pb-2 pt-2 sm:pt-3 px-3 sm:px-4">
                     <CardDescription className="flex items-center text-xs sm:text-sm text-muted-foreground">
-                        <Info size={14} className="mr-2 shrink-0 sm:size-16"/>
+                        <span className="mr-2 text-lg sm:text-xl shrink-0">💬</span>
                         {currentPetDisplayName} says:
                     </CardDescription>
                 </CardHeader>
