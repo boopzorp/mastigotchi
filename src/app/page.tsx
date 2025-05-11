@@ -11,12 +11,12 @@ import { PetDisplay } from "@/components/pet-display";
 import { StatusIndicator } from "@/components/status-indicator";
 import { InteractionButtons } from "@/components/interaction-buttons";
 import { petNeedsAssessment, PetNeedsAssessmentInput } from "@/ai/flows/pet-needs-assessment";
-import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint, SwitchCamera } from "lucide-react";
+import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/contexts/AuthContext";
 import { db } from "@/lib/firebase";
-import { doc, getDoc, setDoc, onSnapshot, Timestamp, collection, addDoc, deleteDoc, query, limit, getDocs } from "firebase/firestore";
+import { doc, setDoc, onSnapshot, Timestamp, collection, addDoc, query, limit } from "firebase/firestore";
 import { PET_TYPES, type PetType } from "@/config/pets";
 
 const INITIAL_HUNGER = 70;
@@ -88,13 +88,13 @@ export default function PocketPalPage() {
 
         if (pets.length > 0) {
           if (!activePetId || !pets.find(p => p.id === activePetId)) {
-            setActivePetId(pets[0].id); // Default to first pet or if active pet was deleted
+            setActivePetId(pets[0].id); 
           }
           setShowPetSelectionScreen(false);
           setIsNamingPet(false); 
         } else {
           setActivePetId(null);
-          setShowPetSelectionScreen(true); // No pets, show selection
+          setShowPetSelectionScreen(true); 
         }
         setIsPetDataLoading(false);
       }, (error) => {
@@ -107,7 +107,6 @@ export default function PocketPalPage() {
       });
       return () => unsubscribe();
     } else {
-      // User logged out or not logged in
       setUserPets([]);
       setActivePetId(null);
       setPetImage(PET_TYPES[0].images.default.url);
@@ -117,7 +116,7 @@ export default function PocketPalPage() {
       setIsNamingPet(false);
       setIsPetDataLoading(false);
     }
-  }, [user, authLoading, toast]);
+  }, [user, authLoading]); // Removed toast from dependencies
 
 
   const saveSinglePetData = useCallback(async (petId: string, dataToUpdate: Partial<FirestorePetData>) => {
@@ -204,7 +203,7 @@ export default function PocketPalPage() {
             cleanliness: newCleanliness,
             happiness: Math.max(0, newHappiness),
           };
-          // Firestore update is done here to avoid rapid writes if state updates frequently
+          
           saveSinglePetData(p.id, { 
             hunger: updatedPet.hunger, 
             cleanliness: updatedPet.cleanliness, 
@@ -255,7 +254,7 @@ export default function PocketPalPage() {
     if ((currentActivePet.hunger < 25 || currentActivePet.happiness < 25 || currentActivePet.cleanliness < 25) && (Date.now() - lastAiCallTimestamp > AI_COOLDOWN)) {
       callPetNeedsAI();
     }
-  }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, callPetNeedsAI, showPetSelectionScreen, isNamingPet]);
+  }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, callPetNeedsAI, user, showPetSelectionScreen, isNamingPet]);
 
   const handleInteraction = (statUpdater: (prevPet: PetData) => Partial<PetData>, message: string, toastMessage: string) => {
     if (!currentActivePet || !user || showPetSelectionScreen || isNamingPet) return;
@@ -264,7 +263,7 @@ export default function PocketPalPage() {
       prevPets.map(p => {
         if (p.id !== activePetId) return p;
         const changes = statUpdater(p);
-        const updatedPet = {
+        const updatedPetData = {
           ...p,
           ...changes,
           hunger: Math.min(100, Math.max(0, changes.hunger ?? p.hunger)),
@@ -272,11 +271,11 @@ export default function PocketPalPage() {
           cleanliness: Math.min(100, Math.max(0, changes.cleanliness ?? p.cleanliness)),
         };
         saveSinglePetData(p.id, {
-          hunger: updatedPet.hunger,
-          happiness: updatedPet.happiness,
-          cleanliness: updatedPet.cleanliness,
+          hunger: updatedPetData.hunger,
+          happiness: updatedPetData.happiness,
+          cleanliness: updatedPetData.cleanliness,
         });
-        return updatedPet;
+        return updatedPetData;
       })
     );
     setPetMessage(message);
@@ -318,7 +317,7 @@ export default function PocketPalPage() {
     setSpeciesForNaming(petDefinition);
     setIsNamingPet(true);
     setShowPetSelectionScreen(false);
-    setNewPetNameInput(petDefinition.defaultName); // Pre-fill with default name
+    setNewPetNameInput(petDefinition.defaultName); 
   };
 
   const handleNamePetSubmit = async (e: FormEvent) => {
@@ -338,17 +337,19 @@ export default function PocketPalPage() {
     };
 
     try {
+      setIsPetDataLoading(true); // Indicate saving/creating new pet
       const petDocRef = await addDoc(collection(db, "users", user.uid, "pets"), newPetFirestoreData);
-      // The onSnapshot listener will update userPets and handle activePetId if needed.
-      // We can optimistically set the new pet as active.
-      setActivePetId(petDocRef.id);
+      // onSnapshot will eventually update userPets and trigger UI changes.
+      // setActivePetId(petDocRef.id); // Optimistically set, or let onSnapshot handle it
       setIsNamingPet(false);
       setSpeciesForNaming(null);
       setNewPetNameInput("");
       toast({ description: `You've adopted ${newPetFirestoreData.petName}!`});
+      // setIsPetDataLoading(false) will be called by the onSnapshot listener after data syncs
     } catch (error) {
       console.error("Error creating new pet:", error);
       toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
+      setIsPetDataLoading(false); // Reset loading on error
     }
   };
   
@@ -363,8 +364,6 @@ export default function PocketPalPage() {
       }
       await signUpWithEmail(email, password, username.trim());
     }
-    // Clear form fields after submission attempt is handled by AuthContext or here if needed
-    // setEmail(''); setPassword(''); setUsername(''); // Keep if auth context doesn't clear them
   };
 
   const handleAdoptNewPetClick = () => {
@@ -405,7 +404,7 @@ export default function PocketPalPage() {
             onClick={() => handleSelectSpeciesForNaming(petDef)} 
             className="w-full justify-start py-6 text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
             variant="outline"
-            disabled={userPets.length >= MAX_PETS}
+            disabled={userPets.length >= MAX_PETS && !userPets.find(p => p.selectedPetTypeId === petDef.id) /* Allow choosing existing if somehow stuck */}
           >
             <Image 
               src={petDef.images.default.url} 
@@ -420,7 +419,7 @@ export default function PocketPalPage() {
         ))}
       </CardContent>
        <CardFooter>
-        <Button variant="ghost" onClick={() => { setShowPetSelectionScreen(false); if(userPets.length === 0 && user) signOut(); /* force re-auth if stuck */}} className="w-full">
+        <Button variant="ghost" onClick={() => { setShowPetSelectionScreen(false); if(userPets.length === 0 && user && !authLoading) signOut(); }} className="w-full">
             Cancel
         </Button>
       </CardFooter>
@@ -459,8 +458,8 @@ export default function PocketPalPage() {
           </div>
         </CardContent>
         <CardFooter className="flex justify-between p-4">
-          <Button variant="ghost" type="button" onClick={() => { setIsNamingPet(false); setSpeciesForNaming(null); setShowPetSelectionScreen(true); /* Go back to species selection */ }}>Back</Button>
-          <Button type="submit">Adopt {newPetNameInput || "Pal"}!</Button>
+          <Button variant="ghost" type="button" onClick={() => { setIsNamingPet(false); setSpeciesForNaming(null); setShowPetSelectionScreen(true); }}>Back</Button>
+          <Button type="submit" disabled={isPetDataLoading}>Adopt {newPetNameInput || "Pal"}!</Button>
         </CardFooter>
       </form>
     </Card>
@@ -484,8 +483,9 @@ export default function PocketPalPage() {
       </div>
     )
   );
-
-  if (authLoading || (user && isPetDataLoading && !showPetSelectionScreen && !isNamingPet && userPets.length === 0)) {
+  
+  // Simplified full-page loading condition
+  if (authLoading || (user && isPetDataLoading && !showPetSelectionScreen && !isNamingPet)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30">
         { user && <AuthArea /> }
@@ -582,7 +582,7 @@ export default function PocketPalPage() {
             <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
             <Skeleton className="w-1/2 h-6 mx-auto" />
             <p className="mt-4 text-muted-foreground">Loading your Pal...</p>
-             {userPets.length === 0 && !isPetDataLoading && (
+             {userPets.length === 0 && !isPetDataLoading && ( // Check !isPetDataLoading to ensure fetch is complete
                 <Button onClick={handleAdoptNewPetClick} className="mt-4">Adopt First Pal</Button>
              )}
           </CardContent>
@@ -625,7 +625,7 @@ export default function PocketPalPage() {
                 onFeed={handleFeed}
                 onPlay={handlePlay}
                 onClean={handleClean}
-                isLoading={isLoadingAi || !currentActivePet}
+                isLoading={isLoadingAi || !currentActivePet || isPetDataLoading}
                 className="rounded-none rounded-b-xl"
               />
             </CardFooter>
@@ -634,17 +634,17 @@ export default function PocketPalPage() {
       </Card>
       
       {user && currentActivePet && !showPetSelectionScreen && !isNamingPet && (
-        <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN} className="mt-4">
+        <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN || isPetDataLoading} className="mt-4">
           {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetDisplayName} need?`}
         </Button>
       )}
 
-      {user && userPets.length > 0 && userPets.length < MAX_PETS && !showPetSelectionScreen && !isNamingPet && (
+      {user && userPets.length > 0 && userPets.length < MAX_PETS && !showPetSelectionScreen && !isNamingPet && !isPetDataLoading && (
          <Button variant="secondary" onClick={handleAdoptNewPetClick} className="mt-4 shadow-md">
             <PawPrint size={18} className="mr-2" /> Adopt Another Pal
           </Button>
       )}
-      {user && <PetSwitcherUI />}
+      {user && !isPetDataLoading && <PetSwitcherUI />}
     </>
   );
 
@@ -654,3 +654,5 @@ export default function PocketPalPage() {
     </div>
   );
 }
+
+    
