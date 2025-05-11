@@ -1,9 +1,10 @@
+
 "use client";
 
 import type { UserAction, UserActionOption } from "@/config/userActions";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ThumbsUp, ThumbsDown, HelpCircle } from "lucide-react"; 
+import { ThumbsUp, ThumbsDown } from "lucide-react"; 
 
 interface UserActionsDisplayProps {
   actions: UserAction[];
@@ -22,13 +23,17 @@ export function UserActionsDisplay({ actions, onActionInteract, getActionState, 
       <h3 className="text-lg sm:text-xl font-semibold text-center text-foreground">Daily Check-ins for {petName}</h3>
       {actions.map((action) => {
         const { canPerform, countToday } = getActionState(action.id);
-        const IconComponent = action.icon || HelpCircle;
+        // const IconComponent = action.icon || HelpCircle; // Previous logic
 
         return (
           <Card key={action.id} className="bg-card/70 shadow-md">
             <CardHeader className="pb-2 sm:pb-3 pt-3 sm:pt-4 px-3 sm:px-4">
               <CardTitle className="text-sm sm:text-base flex items-center">
-                <IconComponent size={18} className="mr-2 text-primary shrink-0 sm:size-20" />
+                {action.icon ? (
+                  <action.icon className="mr-2 text-primary shrink-0 w-[18px] h-[18px] sm:w-5 sm:h-5" />
+                ) : (
+                  <span className="mr-2 text-primary shrink-0 text-xl sm:text-2xl" style={{ lineHeight: '1' }}>✨</span>
+                )}
                 {action.question}
               </CardTitle>
               <CardDescription className="text-xs sm:text-xs">
@@ -42,7 +47,7 @@ export function UserActionsDisplay({ actions, onActionInteract, getActionState, 
                 variant="outline"
                 className="flex-1 border-primary/50 text-primary hover:bg-primary/10 focus:ring-primary text-xs sm:text-sm py-1.5 sm:py-2 h-auto"
               >
-                <ThumbsUp size={14} className="mr-1 sm:mr-2 sm:size-16" />
+                <ThumbsUp size={14} className="mr-1 sm:mr-2 sm:w-4 sm:h-4" />
                 {action.yesOption.text}
               </Button>
               <Button
@@ -51,7 +56,7 @@ export function UserActionsDisplay({ actions, onActionInteract, getActionState, 
                 variant="outline"
                 className="flex-1 border-destructive/50 text-destructive hover:bg-destructive/10 focus:ring-destructive text-xs sm:text-sm py-1.5 sm:py-2 h-auto"
               >
-                <ThumbsDown size={14} className="mr-1 sm:mr-2 sm:size-16" />
+                <ThumbsDown size={14} className="mr-1 sm:mr-2 sm:w-4 sm:h-4" />
                 {action.noOption.text}
               </Button>
             </CardContent>
@@ -61,3 +66,4 @@ export function UserActionsDisplay({ actions, onActionInteract, getActionState, 
     </div>
   );
 }
+
