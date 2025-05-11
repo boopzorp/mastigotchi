@@ -10,6 +10,9 @@ import { Label } from "@/components/ui/label";
 import { PetDisplay } from "@/components/pet-display";
 import { StatusIndicator } from "@/components/status-indicator";
 import { InteractionButtons } from "@/components/interaction-buttons";
+import { UserActionsDisplay } from "@/components/user-actions-display";
+import { USER_ACTIONS, type UserAction, type UserActionOption } from "@/config/userActions";
+import { AlertDialog, AlertDialogAction, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { petNeedsAssessment, PetNeedsAssessmentInput } from "@/ai/flows/pet-needs-assessment";
 import { Apple, Smile, Droplets, Info, LogOut, UserCircle, UserPlus, LogInIcon, PawPrint } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -24,10 +27,14 @@ const INITIAL_HAPPINESS = 80;
 const INITIAL_CLEANLINESS = 75;
 const MAX_PETS = 2;
 
-const STAT_DECREASE_INTERVAL = 5000; // 5 seconds
+const STAT_DECREASE_INTERVAL = 900000; // 15 minutes (15 * 60 * 1000 ms)
+const STAT_DECREASE_AMOUNT = 1; // Decrease by 1 point each interval
 const AI_COOLDOWN = 30000; // 30 seconds before AI can be called again
 
-// Structure for data stored in Firestore (without the client-side 'id')
+interface ActionState {
+  countToday: number;
+  lastPerformedDate: string; // YYYY-MM-DD
+}
 interface FirestorePetData {
   petName: string;
   selectedPetTypeId: string;
@@ -35,9 +42,9 @@ interface FirestorePetData {
   happiness: number;
   cleanliness: number;
   lastUpdated: Timestamp;
+  actionStates?: Record<string, ActionState>; // Keyed by action ID
 }
 
-// Structure used in the component's state, including the Firestore document ID
 interface PetData extends FirestorePetData {
   id: string;
 }
@@ -65,7 +72,10 @@ export default function PocketPalPage() {
   const [authAction, setAuthAction] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [username, setUsername] = useState(''); // For sign-up
+  const [username, setUsername] = useState('');
+
+  const [showPopup, setShowPopup] = useState(false);
+  const [popupMessage, setPopupMessage] = useState("");
 
   const currentActivePet = userPets.find(p => p.id === activePetId);
   const currentPetDefinition = currentActivePet ? PET_TYPES.find(pt => pt.id === currentActivePet.selectedPetTypeId) : null;
@@ -116,7 +126,7 @@ export default function PocketPalPage() {
       setIsNamingPet(false);
       setIsPetDataLoading(false);
     }
-  }, [user, authLoading, toast]); // Removed toast from dependencies
+  }, [user, authLoading, activePetId, toast]);
 
 
   const saveSinglePetData = useCallback(async (petId: string, dataToUpdate: Partial<FirestorePetData>) => {
@@ -167,17 +177,12 @@ export default function PocketPalPage() {
       currentImageSet = images.content;
       message = `${currentActivePet.petName} is feeling great! Thanks to you!`;
     } else {
-      // If not extremely happy, but still generally good, use happy.
-      // If default/neutral is better, this logic can be expanded.
-      // For now, happy is a good general state if no strong negative or positive.
       currentImageSet = images.happy; 
     }
     
     setPetImage(currentImageSet.url);
     setPetImageHint(currentImageSet.hint);
 
-    // Only update the message if AI is not currently loading/thinking
-    // to avoid overwriting AI's message.
     if (!isLoadingAi) {
         setPetMessage(message);
     }
@@ -187,7 +192,6 @@ export default function PocketPalPage() {
     updatePetVisualsAndMessage();
   }, [currentActivePet, currentPetDefinition, updatePetVisualsAndMessage]);
 
-  // Effect for periodic stat decrease
   useEffect(() => {
     if (!user || !currentActivePet || showPetSelectionScreen || isNamingPet) return;
 
@@ -196,24 +200,23 @@ export default function PocketPalPage() {
         prevPets.map(p => {
           if (p.id !== activePetId) return p;
 
-          // Decrease stats randomly but ensure they don't go below 0
-          const newHunger = Math.max(0, p.hunger - Math.floor(Math.random() * 3 + 1)); // Hunger decreases
-          const newCleanliness = Math.max(0, p.cleanliness - Math.floor(Math.random() * 2 + 1)); // Cleanliness decreases
+          const newHunger = Math.max(0, p.hunger - STAT_DECREASE_AMOUNT);
+          const newCleanliness = Math.max(0, p.cleanliness - STAT_DECREASE_AMOUNT);
           
           let newHappiness = p.happiness;
-          // Happiness decreases if other stats are low, or slightly over time
-          if (newHunger < 40) newHappiness -= 1;
-          if (newCleanliness < 40) newHappiness -=1;
-          if (newHappiness === p.happiness && p.happiness > 0) newHappiness -=1; // General decrease if no other factors
+          if (newHunger < 40 || newCleanliness < 40) {
+            newHappiness = Math.max(0, p.happiness - STAT_DECREASE_AMOUNT);
+          } else if (p.happiness > 0) { // Slight decrease over time if not very low
+            newHappiness = Math.max(0, p.happiness - Math.floor(STAT_DECREASE_AMOUNT / 2) || 0);
+          }
           
           const updatedPet = {
             ...p,
             hunger: newHunger,
             cleanliness: newCleanliness,
-            happiness: Math.max(0, newHappiness),
+            happiness: newHappiness,
           };
           
-          // Save updated stats to Firestore
           saveSinglePetData(p.id, { 
             hunger: updatedPet.hunger, 
             cleanliness: updatedPet.cleanliness, 
@@ -228,10 +231,6 @@ export default function PocketPalPage() {
 
   const callPetNeedsAI = useCallback(async () => {
     if (!currentActivePet || isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
-      // Optional: Toast to inform user about cooldown
-      // if (Date.now() - lastAiCallTimestamp < AI_COOLDOWN) {
-      //   toast({ description: `Please wait a bit before asking ${currentPetDisplayName} again.`});
-      // }
       return;
     }
     setIsLoadingAi(true);
@@ -242,9 +241,9 @@ export default function PocketPalPage() {
         happiness: currentActivePet.happiness, 
         cleanliness: currentActivePet.cleanliness 
       };
-      setPetMessage("Thinking about what I need..."); // Temporary message while AI loads
+      setPetMessage("Thinking about what I need...");
       const result = await petNeedsAssessment(assessmentInput);
-      setPetMessage(result.needs); // Update pet message with AI's response
+      setPetMessage(result.needs);
       toast({
         title: `${currentPetDisplayName} Says:`,
         description: result.needs,
@@ -263,10 +262,8 @@ export default function PocketPalPage() {
     }
   }, [currentActivePet, isLoadingAi, lastAiCallTimestamp, toast, currentPetDisplayName]);
   
-  // Effect for AI to automatically trigger if pet stats are low
   useEffect(() => {
     if (!user || !currentActivePet || isLoadingAi || showPetSelectionScreen || isNamingPet) return;
-    // Trigger AI if any stat is critically low and cooldown has passed
     if ((currentActivePet.hunger < 25 || currentActivePet.happiness < 25 || currentActivePet.cleanliness < 25) && (Date.now() - lastAiCallTimestamp > AI_COOLDOWN)) {
       callPetNeedsAI();
     }
@@ -279,7 +276,6 @@ export default function PocketPalPage() {
       prevPets.map(p => {
         if (p.id !== activePetId) return p;
         const changes = statUpdater(p);
-        // Ensure stats are within 0-100 bounds
         const updatedPetData = {
           ...p,
           ...changes,
@@ -287,7 +283,6 @@ export default function PocketPalPage() {
           happiness: Math.min(100, Math.max(0, changes.happiness ?? p.happiness)),
           cleanliness: Math.min(100, Math.max(0, changes.cleanliness ?? p.cleanliness)),
         };
-        // Save changes to Firestore
         saveSinglePetData(p.id, {
           hunger: updatedPetData.hunger,
           happiness: updatedPetData.happiness,
@@ -302,8 +297,8 @@ export default function PocketPalPage() {
 
   const handleFeed = () => handleInteraction(
     (p) => ({
-      hunger: p.hunger + 25 + Math.floor(Math.random() * 10), // Increase hunger significantly
-      happiness: p.happiness + 5 + Math.floor(Math.random() * 5), // Small happiness boost
+      hunger: p.hunger + 25 + Math.floor(Math.random() * 10),
+      happiness: p.happiness + 5 + Math.floor(Math.random() * 5),
     }),
     "Yummy! That hit the spot!",
     `You fed ${currentPetDisplayName}!`
@@ -311,8 +306,8 @@ export default function PocketPalPage() {
 
   const handlePlay = () => handleInteraction(
     (p) => ({
-      happiness: p.happiness + 30 + Math.floor(Math.random() * 10), // Increase happiness significantly
-      hunger: p.hunger - 5 - Math.floor(Math.random() * 5), // Playing makes pet slightly hungry
+      happiness: p.happiness + 30 + Math.floor(Math.random() * 10),
+      hunger: p.hunger - 5 - Math.floor(Math.random() * 5),
     }),
     "Whee! That was fun!",
     `You played with ${currentPetDisplayName}!`
@@ -320,12 +315,75 @@ export default function PocketPalPage() {
 
   const handleClean = () => handleInteraction(
     (p) => ({
-      cleanliness: p.cleanliness + 40 + Math.floor(Math.random() * 10), // Increase cleanliness significantly
-      happiness: p.happiness + 10 + Math.floor(Math.random() * 5), // Small happiness boost from being clean
+      cleanliness: p.cleanliness + 40 + Math.floor(Math.random() * 10),
+      happiness: p.happiness + 10 + Math.floor(Math.random() * 5),
     }),
     "So fresh and so clean!",
     `You cleaned ${currentPetDisplayName}!`
   );
+
+  const getActionStateForPet = useCallback((actionId: string): { countToday: number; canPerform: boolean } => {
+    if (!currentActivePet || !USER_ACTIONS) return { countToday: 0, canPerform: false };
+
+    const actionDefinition = USER_ACTIONS.find(a => a.id === actionId);
+    if (!actionDefinition) return { countToday: 0, canPerform: false };
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const petActionState = currentActivePet.actionStates?.[actionId];
+
+    if (petActionState && petActionState.lastPerformedDate === todayStr) {
+      return {
+        countToday: petActionState.countToday,
+        canPerform: petActionState.countToday < actionDefinition.frequencyPerDay,
+      };
+    }
+    // If no state or last performed date is not today, it can be performed (count is 0 for today)
+    return { countToday: 0, canPerform: true };
+  }, [currentActivePet]);
+
+  const handleUserActionInteract = (actionId: string, option: UserActionOption, choiceKey: 'yes' | 'no') => {
+    if (!currentActivePet || !user) return;
+
+    const actionDefinition = USER_ACTIONS.find(a => a.id === actionId);
+    if (!actionDefinition) return;
+
+    const { canPerform, countToday: currentCountToday } = getActionStateForPet(actionId);
+
+    if (!canPerform) {
+      toast({ description: "You've done this enough for today!", variant: "default" });
+      return;
+    }
+
+    const newHappiness = Math.min(100, Math.max(0, currentActivePet.happiness + option.happinessChange));
+    
+    const todayStr = new Date().toISOString().split('T')[0];
+    const newActionStates = {
+      ...(currentActivePet.actionStates || {}),
+      [actionId]: {
+        countToday: (currentActivePet.actionStates?.[actionId]?.lastPerformedDate === todayStr ? currentCountToday : 0) + 1,
+        lastPerformedDate: todayStr,
+      },
+    };
+
+    setUserPets(prevPets =>
+      prevPets.map(p =>
+        p.id === activePetId ? { ...p, happiness: newHappiness, actionStates: newActionStates } : p
+      )
+    );
+    saveSinglePetData(currentActivePet.id, { happiness: newHappiness, actionStates: newActionStates });
+
+    const feedbackMessage = choiceKey === 'yes' 
+      ? `You chose "${option.text}" for "${actionDefinition.question}" ${currentPetDisplayName} ${option.happinessChange >= 0 ? 'liked that!' : 'disliked that.'}`
+      : `You chose "${option.text}" for "${actionDefinition.question}" ${currentPetDisplayName} ${option.happinessChange >= 0 ? 'liked that!' : 'disliked that.'}`;
+    
+    toast({ description: feedbackMessage });
+
+    if (option.popupMessage) {
+      setPopupMessage(option.popupMessage);
+      setShowPopup(true);
+    }
+  };
+
 
   const handleSelectSpeciesForNaming = (petDefinition: PetType) => {
     if (!user || userPets.length >= MAX_PETS) {
@@ -335,7 +393,7 @@ export default function PocketPalPage() {
     setSpeciesForNaming(petDefinition);
     setIsNamingPet(true);
     setShowPetSelectionScreen(false);
-    setNewPetNameInput(petDefinition.defaultName); // Pre-fill with default name
+    setNewPetNameInput(petDefinition.defaultName);
   };
 
   const handleNamePetSubmit = async (e: FormEvent) => {
@@ -352,22 +410,20 @@ export default function PocketPalPage() {
       happiness: INITIAL_HAPPINESS,
       cleanliness: INITIAL_CLEANLINESS,
       lastUpdated: Timestamp.now(),
+      actionStates: {}, // Initialize actionStates
     };
 
     try {
-      setIsPetDataLoading(true); // Indicate saving/creating new pet
+      setIsPetDataLoading(true);
       const petDocRef = await addDoc(collection(db, "users", user.uid, "pets"), newPetFirestoreData);
-      // onSnapshot will eventually update userPets and trigger UI changes.
-      // setActivePetId(petDocRef.id); // Optimistically set, or let onSnapshot handle it
       setIsNamingPet(false);
       setSpeciesForNaming(null);
       setNewPetNameInput("");
       toast({ description: `You've adopted ${newPetFirestoreData.petName}!`});
-      // setIsPetDataLoading(false) will be called by the onSnapshot listener after data syncs
     } catch (error) {
       console.error("Error creating new pet:", error);
       toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
-      setIsPetDataLoading(false); // Reset loading on error
+      setIsPetDataLoading(false);
     }
   };
   
@@ -422,7 +478,7 @@ export default function PocketPalPage() {
             onClick={() => handleSelectSpeciesForNaming(petDef)} 
             className="w-full justify-start py-6 text-lg h-auto flex-col items-center sm:flex-row sm:items-center sm:text-left" 
             variant="outline"
-            disabled={userPets.length >= MAX_PETS && !userPets.find(p => p.selectedPetTypeId === petDef.id) /* Allow choosing existing if somehow stuck */}
+            disabled={userPets.length >= MAX_PETS && !userPets.find(p => p.selectedPetTypeId === petDef.id)}
           >
             <Image 
               src={petDef.images.default.url} 
@@ -502,7 +558,6 @@ export default function PocketPalPage() {
     )
   );
   
-  // Simplified full-page loading condition
   if (authLoading || (user && isPetDataLoading && !showPetSelectionScreen && !isNamingPet)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4 selection:bg-primary/30">
@@ -595,18 +650,16 @@ export default function PocketPalPage() {
         ) : isNamingPet ? (
             <PetNamingUI />
         ) : !currentActivePet || !currentPetDefinition ? ( 
-          // This state occurs if user is logged in, not in selection/naming, but no active pet (e.g., still loading or no pets found)
           <CardContent className="p-6 text-center min-h-[400px] flex flex-col justify-center items-center">
             <Skeleton className="w-48 h-48 rounded-full mx-auto mb-4" />
             <Skeleton className="w-3/4 h-8 mx-auto mb-2" />
             <Skeleton className="w-1/2 h-6 mx-auto" />
             <p className="mt-4 text-muted-foreground">Loading your Pal...</p>
-             {userPets.length === 0 && !isPetDataLoading && ( // Check !isPetDataLoading to ensure fetch is complete
+             {userPets.length === 0 && !isPetDataLoading && (
                 <Button onClick={handleAdoptNewPetClick} className="mt-4">Adopt First Pal</Button>
              )}
           </CardContent>
         ): (
-          // Main game interface for an active pet
           <>
             <CardContent className="p-6 space-y-6">
               <PetDisplay
@@ -653,11 +706,18 @@ export default function PocketPalPage() {
         )}
       </Card>
       
-      {/* Buttons outside the main card */}
       {user && currentActivePet && !showPetSelectionScreen && !isNamingPet && (
-        <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN || isPetDataLoading} className="mt-4">
-          {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetDisplayName} need?`}
-        </Button>
+        <>
+          <Button variant="outline" onClick={callPetNeedsAI} disabled={isLoadingAi || Date.now() - lastAiCallTimestamp < AI_COOLDOWN || isPetDataLoading} className="mt-4">
+            {isLoadingAi ? "Consulting Wisdom..." : `What does ${currentPetDisplayName} need?`}
+          </Button>
+          <UserActionsDisplay 
+            actions={USER_ACTIONS} 
+            onActionInteract={handleUserActionInteract}
+            getActionState={getActionStateForPet}
+            petName={currentPetDisplayName}
+          />
+        </>
       )}
 
       {user && userPets.length > 0 && userPets.length < MAX_PETS && !showPetSelectionScreen && !isNamingPet && !isPetDataLoading && (
@@ -666,6 +726,20 @@ export default function PocketPalPage() {
           </Button>
       )}
       {user && !isPetDataLoading && <PetSwitcherUI />}
+
+      <AlertDialog open={showPopup} onOpenChange={setShowPopup}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{currentPetDisplayName} feels something!</AlertDialogTitle>
+            <AlertDialogDescription>
+              {popupMessage}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setShowPopup(false)}>Got it</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 
@@ -675,5 +749,3 @@ export default function PocketPalPage() {
     </div>
   );
 }
-
-    
