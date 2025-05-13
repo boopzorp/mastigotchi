@@ -34,6 +34,12 @@ const AI_COOLDOWN = 30000; // 30 seconds
 const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
 const NOTIFICATION_PROBABILITY = 0.3; // 30% chance to send a notification per check if conditions met
 
+const CRITICAL_STAT_NOTIFICATION_INTERVAL = 60 * 1000; // 1 minute
+const BELOW_20_NOTIFICATION_COOLDOWN = 1 * 60 * 60 * 1000; // 1 hour
+const BELOW_10_NOTIFICATION_CYCLE_COOLDOWN = 1 * 60 * 60 * 1000; // 1 hour (to restart a full 2-notification cycle if it dips again after this long)
+const BELOW_10_SECOND_NOTIFICATION_DELAY = 20 * 60 * 1000; // 20 minutes
+
+
 interface ActionState {
   countToday: number;
   lastPerformedDate: string; // YYYY-MM-DD
@@ -312,17 +318,17 @@ export default function PocketPalPage() {
     const { hunger, happiness, cleanliness } = currentActivePet;
 
     if (hunger < 50 && happiness < 50 && cleanliness < 50) {
-        if (cleanliness <= happiness && cleanliness <= hunger) {
+        if (cleanliness <= happiness && cleanliness <= hunger) { // Cleanliness is worst
             finalImageSet = images.dirty;
-            finalMessage = `${currentActivePet.petName} feels really yucky, is sad, and hungry! Cleanliness is the biggest issue right now.`;
-        } else if (happiness <= hunger) { 
+            finalMessage = `${currentActivePet.petName} feels really yucky, is sad, and hungry! A bath is needed most.`;
+        } else if (happiness <= hunger) { // Happiness is worst (or equal to hunger, but cleanliness is better)
             finalImageSet = images.sad;
             finalMessage = `${currentActivePet.petName} is very sad and also hungry. The sadness is hitting hard.`;
-        } else { 
+        } else { // Hunger is worst
             finalImageSet = images.hungry;
             finalMessage = `${currentActivePet.petName} is extremely hungry! Also sad and needs a bath. That tummy is rumbling loudest.`;
         }
-    } else {
+    } else { // At least one stat is >= 50
         if (cleanliness < 50) { 
             finalImageSet = images.dirty;
             finalMessage = `${currentActivePet.petName} feels a bit yucky...`;
@@ -337,7 +343,11 @@ export default function PocketPalPage() {
             finalMessage = `${currentActivePet.petName} is feeling pretty content!`;
             if (hunger > 80 && cleanliness > 80) { 
                  finalMessage = `${currentActivePet.petName} is feeling great! Thanks to you!`;
+                 finalImageSet = images.happy; // Use happy if all good and content
             }
+        } else {
+            finalImageSet = images.default; // Fallback if no specific condition met but not "content" yet
+            finalMessage = `${currentActivePet.petName} is doing alright.`;
         }
     }
     
@@ -466,7 +476,7 @@ export default function PocketPalPage() {
           if (newHunger < 40 || newCleanliness < 40) {
             newHappiness = Math.max(0, p.happiness - STAT_DECREASE_AMOUNT);
           } else if (p.happiness > 0) { 
-            newHappiness = Math.max(0, p.happiness - (STAT_DECREASE_AMOUNT / 2)); 
+            newHappiness = Math.max(0, p.happiness - Math.floor(STAT_DECREASE_AMOUNT / 2)); 
           }
           
           const updatedPet = {
@@ -585,7 +595,7 @@ export default function PocketPalPage() {
                 notificationBody = action.question;
             }
             
-            const sent = sendNotification(notificationTitle, { body: notificationBody, icon: petImage });
+            const sent = sendNotification(notificationTitle, { body: notificationBody, icon: petImage, tag: `action_${action.id}_${currentPetDisplayName}` });
             if (sent) {
               const newNotifiedCount = currentActionNotifiedState.notifiedTodayCount + 1;
               const updatedNotifiedActionStateForCurrentAction = { ...currentActionNotifiedState, notifiedTodayCount: newNotifiedCount };
@@ -609,6 +619,75 @@ export default function PocketPalPage() {
 
     return () => clearInterval(intervalId);
   }, [user, currentActivePet, activePetId, notificationPermission, sendNotification, getActionStateForPet, petImage, currentPetDisplayName, showPetSelectionScreen, isNamingPet, toast]);
+
+  // Critical Status Notifications Effect
+  useEffect(() => {
+    if (!user || !activePetId || notificationPermission !== 'granted' || showPetSelectionScreen || isNamingPet) {
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      const pet = userPets.find(p => p.id === activePetId);
+      if (!pet) return;
+
+      const now = Date.now();
+      const petDisplayName = pet.petName;
+      
+      // --- Below 20% ---
+      const below20Key = `criticalNotificationState_below20_${user.uid}_${pet.id}`;
+      let below20State: { lastSentTimestamp: number | null } = 
+        JSON.parse(typeof window !== 'undefined' ? localStorage.getItem(below20Key) || '{"lastSentTimestamp":null}' : '{"lastSentTimestamp":null}');
+
+      const isAnyStatBelow20 = pet.hunger < 20 || pet.happiness < 20 || pet.cleanliness < 20;
+
+      if (isAnyStatBelow20) {
+        if (!below20State.lastSentTimestamp || (now - below20State.lastSentTimestamp > BELOW_20_NOTIFICATION_COOLDOWN)) {
+          sendNotification(`${petDisplayName} needs attention! Where are YOU?`, { icon: petImage, tag: `pet_status_${pet.id}_below20` });
+          below20State.lastSentTimestamp = now;
+          if (typeof window !== 'undefined') localStorage.setItem(below20Key, JSON.stringify(below20State));
+        }
+      } else {
+        if (below20State.lastSentTimestamp !== null && (pet.hunger >= 30 && pet.happiness >= 30 && pet.cleanliness >= 30)) {
+            below20State.lastSentTimestamp = null; // Reset if recovered
+            if (typeof window !== 'undefined') localStorage.setItem(below20Key, JSON.stringify(below20State));
+        }
+      }
+
+      // --- Below 10% ---
+      const below10Key = `criticalNotificationState_below10_${user.uid}_${pet.id}`;
+      let below10State: {
+        firstSentTimestamp: number | null;
+        secondSentTimestamp: number | null;
+      } = JSON.parse(typeof window !== 'undefined' ? localStorage.getItem(below10Key) || '{"firstSentTimestamp":null, "secondSentTimestamp":null}' : '{"firstSentTimestamp":null, "secondSentTimestamp":null}');
+
+      const isAnyStatBelow10 = pet.hunger < 10 || pet.happiness < 10 || pet.cleanliness < 10;
+
+      if (isAnyStatBelow10) {
+        const canStartNewCycle = !below10State.firstSentTimestamp || (now - below10State.firstSentTimestamp > BELOW_10_NOTIFICATION_CYCLE_COOLDOWN);
+
+        if (canStartNewCycle) {
+          sendNotification(`${petDisplayName} is in critical condition! Please check on me!`, { icon: petImage, tag: `pet_status_${pet.id}_below10_first` });
+          below10State.firstSentTimestamp = now;
+          below10State.secondSentTimestamp = null; 
+          if (typeof window !== 'undefined') localStorage.setItem(below10Key, JSON.stringify(below10State));
+        } else if (below10State.firstSentTimestamp && !below10State.secondSentTimestamp) {
+          if (now - below10State.firstSentTimestamp >= BELOW_10_SECOND_NOTIFICATION_DELAY) {
+            sendNotification(`${petDisplayName} really needs your help NOW! 🆘`, { icon: petImage, tag: `pet_status_${pet.id}_below10_second` });
+            below10State.secondSentTimestamp = now;
+            if (typeof window !== 'undefined') localStorage.setItem(below10Key, JSON.stringify(below10State));
+          }
+        }
+      } else {
+        if (below10State.firstSentTimestamp !== null && (pet.hunger >= 15 && pet.happiness >= 15 && pet.cleanliness >= 15)) {
+            below10State.firstSentTimestamp = null; // Reset if recovered
+            below10State.secondSentTimestamp = null;
+            if (typeof window !== 'undefined') localStorage.setItem(below10Key, JSON.stringify(below10State));
+        }
+      }
+    }, CRITICAL_STAT_NOTIFICATION_INTERVAL);
+
+    return () => clearInterval(intervalId);
+  }, [user, activePetId, userPets, notificationPermission, sendNotification, petImage, showPetSelectionScreen, isNamingPet, toast]);
 
 
   const handleInteraction = (statUpdater: (prevPet: PetData) => Partial<PetData>, message: string, toastMessage: string) => {
