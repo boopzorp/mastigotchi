@@ -28,7 +28,7 @@ const INITIAL_CLEANLINESS = 50;
 const MAX_PETS = 2;
 
 const STAT_DECREASE_INTERVAL = 1800000; // 30 minutes (30 * 60 * 1000)
-const STAT_DECREASE_AMOUNT = 1.5; // 1.5% decrease
+const STAT_DECREASE_AMOUNT = 2; // 2% decrease (previously 1.5%)
 const AI_COOLDOWN = 30000; // 30 seconds
 
 const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
@@ -306,44 +306,39 @@ export default function PocketPalPage() {
     }
     
     const images = currentPetDefinition.images;
-    let finalImageSet = images.default; // Rule 6: Default fallback
-    let finalMessage = `${currentActivePet.petName} is doing okay.`; // Default message
+    let finalImageSet = images.default; 
+    let finalMessage = `${currentActivePet.petName} is doing okay.`; 
 
     const { hunger, happiness, cleanliness } = currentActivePet;
 
-    // Rule 5: Priority for all stats below 50%
     if (hunger < 50 && happiness < 50 && cleanliness < 50) {
         if (cleanliness <= happiness && cleanliness <= hunger) {
             finalImageSet = images.dirty;
             finalMessage = `${currentActivePet.petName} feels really yucky, is sad, and hungry! Cleanliness is the biggest issue right now.`;
-        } else if (happiness <= hunger) { // happiness is the lowest (or tied with hunger, and cleanliness is not the lowest)
+        } else if (happiness <= hunger) { 
             finalImageSet = images.sad;
             finalMessage = `${currentActivePet.petName} is very sad and also hungry. The sadness is hitting hard.`;
-        } else { // hunger is the lowest
+        } else { 
             finalImageSet = images.hungry;
             finalMessage = `${currentActivePet.petName} is extremely hungry! Also sad and needs a bath. That tummy is rumbling loudest.`;
         }
     } else {
-        // Apply rules 1-4 if Rule 5 condition is false (using else if for cascading priority)
-        if (cleanliness < 50) { // Rule 1
+        if (cleanliness < 50) { 
             finalImageSet = images.dirty;
             finalMessage = `${currentActivePet.petName} feels a bit yucky...`;
-        } else if (happiness < 50) { // Rule 2 (implicitly cleanliness >= 50)
+        } else if (happiness < 50) { 
             finalImageSet = images.sad;
             finalMessage = `${currentActivePet.petName} is feeling down...`;
-        } else if (hunger < 50) { // Rule 3 (implicitly cleanliness >= 50 and happiness >= 50)
+        } else if (hunger < 50) { 
             finalImageSet = images.hungry;
             finalMessage = `${currentActivePet.petName} is so hungry...`;
-        } else if (happiness > 60) { // Rule 4 (implicitly all stats >= 50 and happiness > 60)
+        } else if (happiness > 60) { 
             finalImageSet = images.content;
             finalMessage = `${currentActivePet.petName} is feeling pretty content!`;
-            // Enhanced "great" message from previous logic
             if (hunger > 80 && cleanliness > 80) { 
                  finalMessage = `${currentActivePet.petName} is feeling great! Thanks to you!`;
             }
         }
-        // Rule 6 (default fallback) is handled because finalImageSet was initialized with images.default
-        // and finalMessage with "doing okay". If none of the conditions (1-5) are met, these defaults will be used.
     }
     
     setPetImage(finalImageSet.url);
@@ -471,7 +466,7 @@ export default function PocketPalPage() {
           if (newHunger < 40 || newCleanliness < 40) {
             newHappiness = Math.max(0, p.happiness - STAT_DECREASE_AMOUNT);
           } else if (p.happiness > 0) { 
-            newHappiness = Math.max(0, p.happiness - (STAT_DECREASE_AMOUNT / 2)); // Slower decrease if other stats are okay
+            newHappiness = Math.max(0, p.happiness - (STAT_DECREASE_AMOUNT / 2)); 
           }
           
           const updatedPet = {
@@ -518,7 +513,6 @@ export default function PocketPalPage() {
         const storedStatesRaw = typeof window !== 'undefined' ? localStorage.getItem(currentDayStorageKey) : null;
         if (storedStatesRaw) {
           const parsedStates = JSON.parse(storedStatesRaw);
-          // Filter out states that are not for today before setting
           Object.keys(parsedStates).forEach(key => {
             if (parsedStates[key].lastNotifiedDate === todayStr) {
               loadedStates[key] = parsedStates[key];
@@ -529,29 +523,21 @@ export default function PocketPalPage() {
         console.error("Error accessing localStorage for notifiedActionStates:", e);
       }
       
-      // Only update if there's a meaningful change from the current ref value
       if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
          setNotifiedActionStates(loadedStates);
       }
 
-      // Cleanup: Remove old keys for other days/pets to prevent localStorage bloat
       try {
           if (typeof window !== 'undefined') {
               const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
               const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
               localStorage.removeItem(yesterdayStorageKey);
-
-              // Optional: More aggressive cleanup for very old keys if needed
-              // For instance, loop through localStorage keys and remove ones matching a pattern but older than X days
           }
       } catch (e) {
           console.error("Error cleaning up old notifiedActionStates from localStorage:", e);
       }
     };
     loadNotifiedStates();
-  // Dependencies: user and activePetId to reload/reset states when they change.
-  // notifiedActionStatesRef.current is intentionally omitted to prevent loops,
-  // relying on the comparison within the function to avoid unnecessary sets.
   }, [user, activePetId]);
 
 
@@ -568,7 +554,6 @@ export default function PocketPalPage() {
         const petActionState = getActionStateForPet(action.id); 
         if (!petActionState.canPerform) return;
 
-        // Use a functional update for setNotifiedActionStates to ensure we have the latest state
         setNotifiedActionStates(prevNotifiedStates => {
           let currentActionNotifiedState = prevNotifiedStates[action.id] || { notifiedTodayCount: 0, lastNotifiedDate: '' };
 
@@ -832,7 +817,6 @@ export default function PocketPalPage() {
 
         {!user ? (
           <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
-            {/* Removed PetDisplay from here as per request */}
             <div className="w-full mt-4">
               <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-4">
                 <CardTitle className="text-lg sm:text-xl font-bold text-center mb-2">
