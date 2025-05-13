@@ -23,7 +23,7 @@ import { PET_TYPES, type PetType } from "@/config/pets";
 import { useBrowserNotifications } from "@/hooks/useBrowserNotifications";
 
 const INITIAL_HUNGER = 60;
-const INITIAL_HAPPINESS = 70;
+const INITIAL_HAPPINESS = 60;
 const INITIAL_CLEANLINESS = 50;
 const MAX_PETS = 2;
 
