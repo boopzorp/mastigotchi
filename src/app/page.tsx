@@ -28,7 +28,7 @@ const INITIAL_CLEANLINESS = 50;
 const MAX_PETS = 2;
 
 const STAT_DECREASE_INTERVAL = 1800000; // 30 minutes (30 * 60 * 1000)
-const STAT_DECREASE_AMOUNT = 2; // 2% decrease (previously 1.5%)
+const STAT_DECREASE_AMOUNT = 8; // 6% decrease
 const AI_COOLDOWN = 30000; // 30 seconds
 
 const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
