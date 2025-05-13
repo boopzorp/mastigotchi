@@ -27,8 +27,8 @@ const INITIAL_HAPPINESS = 60;
 const INITIAL_CLEANLINESS = 50;
 const MAX_PETS = 2;
 
-const STAT_DECREASE_INTERVAL = 1200000; // 20 minutes (20 * 60 * 1000)
-const STAT_DECREASE_AMOUNT = 3;
+const STAT_DECREASE_INTERVAL = 1800000; // 30 minutes (30 * 60 * 1000)
+const STAT_DECREASE_AMOUNT = 1.5; // 1.5% decrease
 const AI_COOLDOWN = 30000; // 30 seconds
 
 const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
@@ -183,6 +183,7 @@ const PetNamingUIComponent: React.FC<PetNamingUIProps> = ({
               onChange={(e) => onNewPetNameInputChange(e.target.value)}
               required
               className="mt-1 text-sm sm:text-base"
+              autoFocus
             />
           </div>
         </CardContent>
@@ -298,38 +299,58 @@ export default function PocketPalPage() {
     }
 
     if (!currentActivePet || !currentPetDefinition) {
-        setPetImage(""); 
-        setPetImageHint("");
+        setPetImage(PET_TYPES[0].images.default.url); 
+        setPetImageHint(PET_TYPES[0].images.default.hint);
         setPetMessage("Loading your Pal or adopt one!");
         return;
     }
     
     const images = currentPetDefinition.images;
-    let currentImageSet = images.default;
-    let message = `${currentActivePet.petName} is doing okay!`;
+    let finalImageSet = images.default; // Rule 6: Default fallback
+    let finalMessage = `${currentActivePet.petName} is doing okay.`; // Default message
 
     const { hunger, happiness, cleanliness } = currentActivePet;
-    if (hunger < 30) {
-      currentImageSet = images.hungry;
-      message = `${currentActivePet.petName} is so hungry...`;
-    } else if (cleanliness < 30) {
-      currentImageSet = images.dirty;
-      message = `${currentActivePet.petName} feels a bit yucky...`;
-    } else if (happiness < 30) {
-      currentImageSet = images.sad;
-      message = `${currentActivePet.petName} is feeling down...`;
-    } else if (happiness > 90 && hunger > 80 && cleanliness > 80) {
-      currentImageSet = images.content;
-      message = `${currentActivePet.petName} is feeling great! Thanks to you!`;
-    } else { 
-      currentImageSet = images.happy; 
+
+    // Rule 5: Priority for all stats below 50%
+    if (hunger < 50 && happiness < 50 && cleanliness < 50) {
+        if (cleanliness <= happiness && cleanliness <= hunger) {
+            finalImageSet = images.dirty;
+            finalMessage = `${currentActivePet.petName} feels really yucky, is sad, and hungry! Cleanliness is the biggest issue right now.`;
+        } else if (happiness <= hunger) { // happiness is the lowest (or tied with hunger, and cleanliness is not the lowest)
+            finalImageSet = images.sad;
+            finalMessage = `${currentActivePet.petName} is very sad and also hungry. The sadness is hitting hard.`;
+        } else { // hunger is the lowest
+            finalImageSet = images.hungry;
+            finalMessage = `${currentActivePet.petName} is extremely hungry! Also sad and needs a bath. That tummy is rumbling loudest.`;
+        }
+    } else {
+        // Apply rules 1-4 if Rule 5 condition is false (using else if for cascading priority)
+        if (cleanliness < 50) { // Rule 1
+            finalImageSet = images.dirty;
+            finalMessage = `${currentActivePet.petName} feels a bit yucky...`;
+        } else if (happiness < 50) { // Rule 2 (implicitly cleanliness >= 50)
+            finalImageSet = images.sad;
+            finalMessage = `${currentActivePet.petName} is feeling down...`;
+        } else if (hunger < 50) { // Rule 3 (implicitly cleanliness >= 50 and happiness >= 50)
+            finalImageSet = images.hungry;
+            finalMessage = `${currentActivePet.petName} is so hungry...`;
+        } else if (happiness > 60) { // Rule 4 (implicitly all stats >= 50 and happiness > 60)
+            finalImageSet = images.content;
+            finalMessage = `${currentActivePet.petName} is feeling pretty content!`;
+            // Enhanced "great" message from previous logic
+            if (hunger > 80 && cleanliness > 80) { 
+                 finalMessage = `${currentActivePet.petName} is feeling great! Thanks to you!`;
+            }
+        }
+        // Rule 6 (default fallback) is handled because finalImageSet was initialized with images.default
+        // and finalMessage with "doing okay". If none of the conditions (1-5) are met, these defaults will be used.
     }
     
-    setPetImage(currentImageSet.url);
-    setPetImageHint(currentImageSet.hint);
+    setPetImage(finalImageSet.url);
+    setPetImageHint(finalImageSet.hint);
 
     if (!isLoadingAi) {
-        setPetMessage(message);
+        setPetMessage(finalMessage);
     }
   }, [currentActivePet, currentPetDefinition, isLoadingAi, user, showPetSelectionScreen, isNamingPet, speciesForNaming]);
 
@@ -450,7 +471,7 @@ export default function PocketPalPage() {
           if (newHunger < 40 || newCleanliness < 40) {
             newHappiness = Math.max(0, p.happiness - STAT_DECREASE_AMOUNT);
           } else if (p.happiness > 0) { 
-            newHappiness = Math.max(0, p.happiness - (STAT_DECREASE_AMOUNT / 2));
+            newHappiness = Math.max(0, p.happiness - (STAT_DECREASE_AMOUNT / 2)); // Slower decrease if other stats are okay
           }
           
           const updatedPet = {
@@ -488,47 +509,49 @@ export default function PocketPalPage() {
       return;
     }
     
-    const todayStr = new Date().toISOString().split('T')[0];
-    const currentDayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
-    
-    let loadedStates: Record<string, NotifiedActionState> = {};
-    try {
-      const storedStatesRaw = typeof window !== 'undefined' ? localStorage.getItem(currentDayStorageKey) : null;
-      if (storedStatesRaw) {
-        const parsedStates = JSON.parse(storedStatesRaw);
-        // Filter out states that are not for today
-        Object.keys(parsedStates).forEach(key => {
-          if (parsedStates[key].lastNotifiedDate === todayStr) {
-            loadedStates[key] = parsedStates[key];
-          }
-        });
-      }
-    } catch (e) {
-      console.error("Error accessing localStorage for notifiedActionStates:", e);
-      // Keep loadedStates empty or handle error appropriately
-    }
-    
-    // Only update if there's a meaningful change.
-    // This comparison might be too naive for complex objects, but for this structure it's often okay.
-    if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
-       setNotifiedActionStates(loadedStates);
-    }
-
-    // Cleanup: Remove old keys for other days/pets to prevent localStorage bloat
-    // This is a simplified cleanup. A more robust solution might iterate through all keys.
-    try {
-        if (typeof window !== 'undefined') {
-            const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-            const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
-            localStorage.removeItem(yesterdayStorageKey);
+    const loadNotifiedStates = () => {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const currentDayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
+      let loadedStates: Record<string, NotifiedActionState> = {};
+      
+      try {
+        const storedStatesRaw = typeof window !== 'undefined' ? localStorage.getItem(currentDayStorageKey) : null;
+        if (storedStatesRaw) {
+          const parsedStates = JSON.parse(storedStatesRaw);
+          // Filter out states that are not for today before setting
+          Object.keys(parsedStates).forEach(key => {
+            if (parsedStates[key].lastNotifiedDate === todayStr) {
+              loadedStates[key] = parsedStates[key];
+            }
+          });
         }
-    } catch (e) {
-        console.error("Error cleaning up old notifiedActionStates from localStorage:", e);
-    }
+      } catch (e) {
+        console.error("Error accessing localStorage for notifiedActionStates:", e);
+      }
+      
+      // Only update if there's a meaningful change from the current ref value
+      if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
+         setNotifiedActionStates(loadedStates);
+      }
 
-  // Adding notifiedActionStatesRef.current to dependencies would cause infinite loop
-  // if we don't handle the comparison carefully.
-  // We rely on user/activePetId changes to trigger re-load.
+      // Cleanup: Remove old keys for other days/pets to prevent localStorage bloat
+      try {
+          if (typeof window !== 'undefined') {
+              const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+              const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
+              localStorage.removeItem(yesterdayStorageKey);
+
+              // Optional: More aggressive cleanup for very old keys if needed
+              // For instance, loop through localStorage keys and remove ones matching a pattern but older than X days
+          }
+      } catch (e) {
+          console.error("Error cleaning up old notifiedActionStates from localStorage:", e);
+      }
+    };
+    loadNotifiedStates();
+  // Dependencies: user and activePetId to reload/reset states when they change.
+  // notifiedActionStatesRef.current is intentionally omitted to prevent loops,
+  // relying on the comparison within the function to avoid unnecessary sets.
   }, [user, activePetId]);
 
 
@@ -545,10 +568,9 @@ export default function PocketPalPage() {
         const petActionState = getActionStateForPet(action.id); 
         if (!petActionState.canPerform) return;
 
+        // Use a functional update for setNotifiedActionStates to ensure we have the latest state
         setNotifiedActionStates(prevNotifiedStates => {
-          // Ensure we're working with the most up-to-date states from ref or prevNotifiedStates
-          const currentOverallStates = notifiedActionStatesRef.current; 
-          let currentActionNotifiedState = currentOverallStates[action.id] || { notifiedTodayCount: 0, lastNotifiedDate: '' };
+          let currentActionNotifiedState = prevNotifiedStates[action.id] || { notifiedTodayCount: 0, lastNotifiedDate: '' };
 
           if (currentActionNotifiedState.lastNotifiedDate !== todayStr) {
             currentActionNotifiedState = { notifiedTodayCount: 0, lastNotifiedDate: todayStr };
@@ -581,22 +603,20 @@ export default function PocketPalPage() {
             const sent = sendNotification(notificationTitle, { body: notificationBody, icon: petImage });
             if (sent) {
               const newNotifiedCount = currentActionNotifiedState.notifiedTodayCount + 1;
-              const updatedNotifiedActionState = { ...currentActionNotifiedState, notifiedTodayCount: newNotifiedCount };
+              const updatedNotifiedActionStateForCurrentAction = { ...currentActionNotifiedState, notifiedTodayCount: newNotifiedCount };
               
               const newStatesForStorage = {
-                ...currentOverallStates, // Use the ref's value as base for update
-                [action.id]: updatedNotifiedActionState
+                ...prevNotifiedStates, 
+                [action.id]: updatedNotifiedActionStateForCurrentAction
               };
               try {
                 if (typeof window !== 'undefined') localStorage.setItem(currentDayStorageKey, JSON.stringify(newStatesForStorage));
               } catch (e) {
                  console.error("Error saving notifiedActionStates to localStorage:", e);
               }
-              // Return the new state to update React state
               return newStatesForStorage; 
             }
           }
-          // If no notification sent, return the previous state to avoid re-render
           return prevNotifiedStates; 
         });
       });
@@ -1021,3 +1041,5 @@ export default function PocketPalPage() {
   );
 }
 
+
+    
