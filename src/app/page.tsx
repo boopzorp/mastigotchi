@@ -22,13 +22,13 @@ import { doc, setDoc, onSnapshot, Timestamp, collection, addDoc, query, limit } 
 import { PET_TYPES, type PetType } from "@/config/pets";
 import { useBrowserNotifications } from "@/hooks/useBrowserNotifications";
 
-const INITIAL_HUNGER = 70;
-const INITIAL_HAPPINESS = 80;
-const INITIAL_CLEANLINESS = 75;
+const INITIAL_HUNGER = 60;
+const INITIAL_HAPPINESS = 70;
+const INITIAL_CLEANLINESS = 50;
 const MAX_PETS = 2;
 
-const STAT_DECREASE_INTERVAL = 1800000; // 30 minutes (30 * 60 * 1000)
-const STAT_DECREASE_AMOUNT = 1.5;
+const STAT_DECREASE_INTERVAL = 1200000; // 20 minutes (20 * 60 * 1000)
+const STAT_DECREASE_AMOUNT = 3;
 const AI_COOLDOWN = 30000; // 30 seconds
 
 const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
