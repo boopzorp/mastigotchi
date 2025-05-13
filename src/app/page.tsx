@@ -27,8 +27,8 @@ const INITIAL_HAPPINESS = 80;
 const INITIAL_CLEANLINESS = 75;
 const MAX_PETS = 2;
 
-const STAT_DECREASE_INTERVAL = 900000; // 15 minutes
-const STAT_DECREASE_AMOUNT = 1;
+const STAT_DECREASE_INTERVAL = 1800000; // 30 minutes (30 * 60 * 1000)
+const STAT_DECREASE_AMOUNT = 1.5;
 const AI_COOLDOWN = 30000; // 30 seconds
 
 const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
@@ -145,6 +145,15 @@ const PetNamingUIComponent: React.FC<PetNamingUIProps> = ({
   onBackClick,
   isPetDataLoading,
 }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: This effect should only run when speciesForNaming changes to focus the input.
+  useEffect(() => {
+    if (speciesForNaming && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [speciesForNaming]);
+
   if (!speciesForNaming) return null;
 
   return (
@@ -166,6 +175,7 @@ const PetNamingUIComponent: React.FC<PetNamingUIProps> = ({
           <div>
             <Label htmlFor="petName" className="text-xs sm:text-sm">Pet's Name</Label>
             <Input
+              ref={inputRef}
               id="petName"
               type="text"
               placeholder="e.g., Sparky"
@@ -173,7 +183,6 @@ const PetNamingUIComponent: React.FC<PetNamingUIProps> = ({
               onChange={(e) => onNewPetNameInputChange(e.target.value)}
               required
               className="mt-1 text-sm sm:text-base"
-              autoFocus
             />
           </div>
         </CardContent>
@@ -441,7 +450,7 @@ export default function PocketPalPage() {
           if (newHunger < 40 || newCleanliness < 40) {
             newHappiness = Math.max(0, p.happiness - STAT_DECREASE_AMOUNT);
           } else if (p.happiness > 0) { 
-            newHappiness = Math.max(0, p.happiness - Math.floor(STAT_DECREASE_AMOUNT / 2) || 0);
+            newHappiness = Math.max(0, p.happiness - (STAT_DECREASE_AMOUNT / 2));
           }
           
           const updatedPet = {
@@ -472,37 +481,54 @@ export default function PocketPalPage() {
 
 
   useEffect(() => {
-    if (user && activePetId) {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const currentDayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
-      
-      let loadedStates: Record<string, NotifiedActionState> = {};
-      try {
-        const storedStatesRaw = typeof window !== 'undefined' ? localStorage.getItem(currentDayStorageKey) : null;
-        if (storedStatesRaw) {
-          loadedStates = JSON.parse(storedStatesRaw);
-        }
-      } catch (e) {
-        console.error("Error accessing localStorage for notifiedActionStates:", e);
-        loadedStates = {}; 
-      }
-      
-      if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
-        setNotifiedActionStates(loadedStates);
-      }
-  
-      const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-      const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
-      try {
-        if (typeof window !== 'undefined') localStorage.removeItem(yesterdayStorageKey);
-      } catch (e) {
-        console.error("Error removing yesterday's notifiedActionStates from localStorage:", e);
-      }
-    } else {
+    if (!user || !activePetId) {
       if (Object.keys(notifiedActionStatesRef.current).length > 0) {
         setNotifiedActionStates({});
       }
+      return;
     }
+    
+    const todayStr = new Date().toISOString().split('T')[0];
+    const currentDayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${todayStr}`;
+    
+    let loadedStates: Record<string, NotifiedActionState> = {};
+    try {
+      const storedStatesRaw = typeof window !== 'undefined' ? localStorage.getItem(currentDayStorageKey) : null;
+      if (storedStatesRaw) {
+        const parsedStates = JSON.parse(storedStatesRaw);
+        // Filter out states that are not for today
+        Object.keys(parsedStates).forEach(key => {
+          if (parsedStates[key].lastNotifiedDate === todayStr) {
+            loadedStates[key] = parsedStates[key];
+          }
+        });
+      }
+    } catch (e) {
+      console.error("Error accessing localStorage for notifiedActionStates:", e);
+      // Keep loadedStates empty or handle error appropriately
+    }
+    
+    // Only update if there's a meaningful change.
+    // This comparison might be too naive for complex objects, but for this structure it's often okay.
+    if (JSON.stringify(loadedStates) !== JSON.stringify(notifiedActionStatesRef.current)) {
+       setNotifiedActionStates(loadedStates);
+    }
+
+    // Cleanup: Remove old keys for other days/pets to prevent localStorage bloat
+    // This is a simplified cleanup. A more robust solution might iterate through all keys.
+    try {
+        if (typeof window !== 'undefined') {
+            const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+            const yesterdayStorageKey = `notifiedActionStates_${user.uid}_${activePetId}_${yesterdayStr}`;
+            localStorage.removeItem(yesterdayStorageKey);
+        }
+    } catch (e) {
+        console.error("Error cleaning up old notifiedActionStates from localStorage:", e);
+    }
+
+  // Adding notifiedActionStatesRef.current to dependencies would cause infinite loop
+  // if we don't handle the comparison carefully.
+  // We rely on user/activePetId changes to trigger re-load.
   }, [user, activePetId]);
 
 
@@ -520,7 +546,9 @@ export default function PocketPalPage() {
         if (!petActionState.canPerform) return;
 
         setNotifiedActionStates(prevNotifiedStates => {
-          let currentActionNotifiedState = prevNotifiedStates[action.id] || { notifiedTodayCount: 0, lastNotifiedDate: '' };
+          // Ensure we're working with the most up-to-date states from ref or prevNotifiedStates
+          const currentOverallStates = notifiedActionStatesRef.current; 
+          let currentActionNotifiedState = currentOverallStates[action.id] || { notifiedTodayCount: 0, lastNotifiedDate: '' };
 
           if (currentActionNotifiedState.lastNotifiedDate !== todayStr) {
             currentActionNotifiedState = { notifiedTodayCount: 0, lastNotifiedDate: todayStr };
@@ -555,19 +583,21 @@ export default function PocketPalPage() {
               const newNotifiedCount = currentActionNotifiedState.notifiedTodayCount + 1;
               const updatedNotifiedActionState = { ...currentActionNotifiedState, notifiedTodayCount: newNotifiedCount };
               
-              const newOverallStates = {
-                ...prevNotifiedStates,
+              const newStatesForStorage = {
+                ...currentOverallStates, // Use the ref's value as base for update
                 [action.id]: updatedNotifiedActionState
               };
               try {
-                if (typeof window !== 'undefined') localStorage.setItem(currentDayStorageKey, JSON.stringify(newOverallStates));
+                if (typeof window !== 'undefined') localStorage.setItem(currentDayStorageKey, JSON.stringify(newStatesForStorage));
               } catch (e) {
                  console.error("Error saving notifiedActionStates to localStorage:", e);
               }
-              return newOverallStates;
+              // Return the new state to update React state
+              return newStatesForStorage; 
             }
           }
-          return prevNotifiedStates;
+          // If no notification sent, return the previous state to avoid re-render
+          return prevNotifiedStates; 
         });
       });
     }, NOTIFICATION_CHECK_INTERVAL);
@@ -714,8 +744,6 @@ export default function PocketPalPage() {
     } finally {
         // setIsPetDataLoading will be set to false by the onSnapshot listener
         // when the new pet is detected and list is updated.
-        // However, if addDoc fails, we might need to set it false here.
-        // The onSnapshot should handle loading state correctly.
     }
   };
   
@@ -759,7 +787,7 @@ export default function PocketPalPage() {
   const handleNamingBackClick = () => {
     setIsNamingPet(false);
     setSpeciesForNaming(null);
-    setNewPetNameInput(""); // Clear input when going back
+    setNewPetNameInput(""); 
     setShowPetSelectionScreen(true); 
   };
   
@@ -784,6 +812,7 @@ export default function PocketPalPage() {
 
         {!user ? (
           <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
+            {/* Removed PetDisplay from here as per request */}
             <div className="w-full mt-4">
               <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-4">
                 <CardTitle className="text-lg sm:text-xl font-bold text-center mb-2">
@@ -850,8 +879,6 @@ export default function PocketPalPage() {
              onSelectSpecies={handleSelectSpeciesForNaming}
              onCancel={() => {
                 setShowPetSelectionScreen(false);
-                // If user cancels and has no pets, they might see the "Adopt First Pal" screen.
-                // updatePetVisualsAndMessage will handle the message.
              }}
              userPetsCount={userPets.length}
              maxPets={MAX_PETS}
@@ -993,3 +1020,4 @@ export default function PocketPalPage() {
     </div>
   );
 }
+
