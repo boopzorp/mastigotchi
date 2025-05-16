@@ -28,8 +28,10 @@ const INITIAL_HAPPINESS = 60;
 const INITIAL_CLEANLINESS = 50;
 const MAX_PETS = 2;
 
-const STAT_DECREASE_INTERVAL = 1800000; // 30 minutes 
-const STAT_DECREASE_AMOUNT = 8; 
+// New constants for server-side calculation
+const STAT_DECREASE_INTERVAL_MINUTES_FOR_CALCULATION = 60; // 60 minutes
+const STAT_DECREASE_PERCENT_PER_INTERVAL = 7; // 7 percent
+
 const AI_COOLDOWN = 30000; // 30 seconds
 
 const NOTIFICATION_CHECK_INTERVAL = 1800000; // Check every 30 minutes
@@ -414,7 +416,7 @@ export default function PocketPalPage() {
 
   useEffect(() => {
     if (authLoading || !user || !user.uid) {
-      if (!authLoading && !user) { // User explicitly signed out or not logged in
+      if (!authLoading && !user) { 
         setUserPets([]);
         setActivePetId(null);
         setShowPetSelectionScreen(false);
@@ -427,41 +429,89 @@ export default function PocketPalPage() {
     setIsPetDataLoading(true);
     const petsColRef = collection(db, "users", user.uid, "pets");
     const q = query(petsColRef, limit(MAX_PETS));
-    const todayStr = new Date().toISOString().split('T')[0];
-  
+    
     const unsubscribe = onSnapshot(q, async (querySnapshot) => {
       const petsFromFirestore: PetData[] = [];
       const firestoreUpdatePromises: Promise<void>[] = [];
+      const now = new Date(); 
+      const todayStr = now.toISOString().split('T')[0];
   
       querySnapshot.forEach((docSnap) => {
         const petDataFromSnap = docSnap.data() as FirestorePetData;
+        const currentPetId = docSnap.id;
+        let updatedPetDataForState: FirestorePetData = { ...petDataFromSnap };
+        let hasChangesToPersist = false;
+        const dataToUpdateInFirestore: Partial<FirestorePetData> & { lastUpdated?: Timestamp } = {};
+
+        // Action States Reset Logic
         const currentPetActionStates = petDataFromSnap.actionStates || {};
         const processedActionStates: Record<string, ActionState> = {};
-        let hasChangesForFirestore = false;
-  
+        let actionStatesChanged = false;
         for (const actionId in currentPetActionStates) {
           const actionState = currentPetActionStates[actionId];
           if (actionState.lastPerformedDate !== todayStr && actionState.countToday !== 0) {
-            processedActionStates[actionId] = {
-              ...actionState,
-              countToday: 0, // Reset countToday
-            };
-            hasChangesForFirestore = true;
+            processedActionStates[actionId] = { ...actionState, countToday: 0 };
+            actionStatesChanged = true;
           } else {
             processedActionStates[actionId] = actionState;
           }
         }
+        if (actionStatesChanged) {
+            dataToUpdateInFirestore.actionStates = processedActionStates;
+            hasChangesToPersist = true;
+        }
+        updatedPetDataForState.actionStates = processedActionStates;
+
+        // Stat Decrease Logic (replaces setInterval)
+        const lastUpdatedDate = petDataFromSnap.lastUpdated.toDate();
+        const timeDiffMs = now.getTime() - lastUpdatedDate.getTime();
+        const timeDiffMinutes = timeDiffMs / (1000 * 60);
         
-        // Prepare PetData for React state using potentially processed actionStates
-        petsFromFirestore.push({ 
-          id: docSnap.id, 
-          ...petDataFromSnap, 
-          actionStates: processedActionStates // Use the states that reflect today's reality
+        if (timeDiffMinutes >= 1) { // Process only if some time has passed
+            const intervalsPassed = Math.floor(timeDiffMinutes / STAT_DECREASE_INTERVAL_MINUTES_FOR_CALCULATION);
+
+            if (intervalsPassed > 0) {
+                const totalDecreasePercent = intervalsPassed * STAT_DECREASE_PERCENT_PER_INTERVAL;
+
+                let newHunger = Math.max(0, updatedPetDataForState.hunger - totalDecreasePercent);
+                let newCleanliness = Math.max(0, updatedPetDataForState.cleanliness - totalDecreasePercent);
+                let newHappiness = updatedPetDataForState.happiness;
+
+                if (newHunger < 40 || newCleanliness < 40) {
+                    newHappiness = Math.max(0, updatedPetDataForState.happiness - totalDecreasePercent);
+                } else if (updatedPetDataForState.happiness > 0) {
+                    newHappiness = Math.max(0, updatedPetDataForState.happiness - Math.floor(totalDecreasePercent / 1.5));
+                }
+                
+                if (updatedPetDataForState.hunger !== newHunger || 
+                    updatedPetDataForState.cleanliness !== newCleanliness || 
+                    updatedPetDataForState.happiness !== newHappiness) {
+                    
+                    dataToUpdateInFirestore.hunger = newHunger;
+                    dataToUpdateInFirestore.happiness = newHappiness;
+                    dataToUpdateInFirestore.cleanliness = newCleanliness;
+                    
+                    updatedPetDataForState.hunger = newHunger;
+                    updatedPetDataForState.happiness = newHappiness;
+                    updatedPetDataForState.cleanliness = newCleanliness;
+                    hasChangesToPersist = true;
+                }
+            }
+        }
+        
+        if (hasChangesToPersist) {
+            dataToUpdateInFirestore.lastUpdated = Timestamp.fromDate(now);
+        }
+        updatedPetDataForState.lastUpdated = Timestamp.fromDate(now); // Always update for React state if read
+
+        petsFromFirestore.push({
+          id: currentPetId,
+          ...updatedPetDataForState,
         });
   
-        if (hasChangesForFirestore) {
-          const petDocRef = doc(db, "users", user.uid, "pets", docSnap.id);
-          firestoreUpdatePromises.push(updateDoc(petDocRef, { actionStates: processedActionStates }));
+        if (hasChangesToPersist) {
+          const petDocRef = doc(db, "users", user.uid, "pets", currentPetId);
+          firestoreUpdatePromises.push(setDoc(petDocRef, dataToUpdateInFirestore, { merge: true }));
         }
       });
   
@@ -469,8 +519,8 @@ export default function PocketPalPage() {
         try {
           await Promise.all(firestoreUpdatePromises);
         } catch (error) {
-          console.error("Error resetting actionStates in Firestore:", error);
-          toast({ title: "Data Sync Issue", description: "Could not reset daily counters.", variant: "destructive" });
+          console.error("Error updating pet data in Firestore:", error);
+          toast({ title: "Data Sync Issue", description: "Could not sync all pet updates.", variant: "destructive" });
         }
       }
   
@@ -506,43 +556,8 @@ export default function PocketPalPage() {
     updatePetVisualsAndMessage();
   }, [currentActivePet, currentPetDefinition, updatePetVisualsAndMessage]);
 
-  useEffect(() => {
-    if (!user || !currentActivePet || showPetSelectionScreen || isNamingPet) return;
+  // Removed old client-side stat decrease interval useEffect
 
-    const intervalId = setInterval(() => {
-      setUserPets(prevPets => 
-        prevPets.map(p => {
-          if (p.id !== activePetId) return p;
-
-          const newHunger = Math.max(0, p.hunger - STAT_DECREASE_AMOUNT);
-          const newCleanliness = Math.max(0, p.cleanliness - STAT_DECREASE_AMOUNT);
-          
-          let newHappiness = p.happiness;
-          if (newHunger < 40 || newCleanliness < 40) {
-            newHappiness = Math.max(0, p.happiness - STAT_DECREASE_AMOUNT);
-          } else if (p.happiness > 0) { 
-            newHappiness = Math.max(0, p.happiness - Math.floor(STAT_DECREASE_AMOUNT / 2)); 
-          }
-          
-          const updatedPet = {
-            ...p,
-            hunger: newHunger,
-            cleanliness: newCleanliness,
-            happiness: newHappiness,
-          };
-          
-          saveSinglePetData(p.id, { 
-            hunger: updatedPet.hunger, 
-            cleanliness: updatedPet.cleanliness, 
-            happiness: updatedPet.happiness 
-          });
-          return updatedPet;
-        })
-      );
-    }, STAT_DECREASE_INTERVAL);
-    return () => clearInterval(intervalId);
-  }, [user, currentActivePet, saveSinglePetData, showPetSelectionScreen, isNamingPet, activePetId]);
-  
   useEffect(() => {
     if (!user || !currentActivePet || isLoadingAi || showPetSelectionScreen || isNamingPet) return;
     if ((currentActivePet.hunger < 25 || currentActivePet.happiness < 25 || currentActivePet.cleanliness < 25) && (Date.now() - lastAiCallTimestamp > AI_COOLDOWN)) {
@@ -568,7 +583,6 @@ export default function PocketPalPage() {
         const storedStatesRaw = typeof window !== 'undefined' ? localStorage.getItem(currentDayStorageKey) : null;
         if (storedStatesRaw) {
           const parsedStates = JSON.parse(storedStatesRaw);
-          // Ensure only today's states are loaded if app was open across midnight
           Object.keys(parsedStates).forEach(key => {
             if (parsedStates[key].lastNotifiedDate === todayStr) {
               loadedStates[key] = parsedStates[key];
@@ -576,20 +590,16 @@ export default function PocketPalPage() {
           });
         }
       } catch (e) {
-        // Avoid crashing if localStorage is unavailable or corrupted
         console.error("Error accessing localStorage for notifiedActionStates:", e);
       }
       
-      // Only update state if loaded states are different from current,
-      // and ensure that if todayStr has changed (new day), we clear old states.
       const currentNotifiedActionStates = notifiedActionStatesRef.current;
       let statesChanged = JSON.stringify(loadedStates) !== JSON.stringify(currentNotifiedActionStates);
       
-      // If it's a new day and current states are from yesterday, clear them
       if (!statesChanged && Object.keys(currentNotifiedActionStates).length > 0) {
           const firstStateKey = Object.keys(currentNotifiedActionStates)[0];
           if (currentNotifiedActionStates[firstStateKey] && currentNotifiedActionStates[firstStateKey].lastNotifiedDate !== todayStr) {
-              loadedStates = {}; // Reset for new day
+              loadedStates = {}; 
               statesChanged = true;
           }
       }
@@ -598,7 +608,6 @@ export default function PocketPalPage() {
          setNotifiedActionStates(loadedStates);
       }
 
-      // Cleanup localStorage for previous days
       try {
           if (typeof window !== 'undefined') {
               const yesterdayStr = new Date(Date.now() - 86400000).toISOString().split('T')[0];
@@ -610,8 +619,6 @@ export default function PocketPalPage() {
       }
     };
     loadNotifiedStates();
-    // Dependency array carefully chosen: user and activePetId to reload for new pet/user.
-    // No direct dependency on notifiedActionStatesRef to prevent loops if localStorage write triggers re-render that calls this.
   }, [user, activePetId]);
 
 
@@ -684,7 +691,6 @@ export default function PocketPalPage() {
     return () => clearInterval(intervalId);
   }, [user, currentActivePet, activePetId, notificationPermission, sendNotification, getActionStateForPet, petImage, currentPetDisplayName, showPetSelectionScreen, isNamingPet, toast]);
 
-  // Critical Status Notifications Effect
   useEffect(() => {
     if (!user || !activePetId || notificationPermission !== 'granted' || showPetSelectionScreen || isNamingPet) {
       return;
@@ -697,7 +703,6 @@ export default function PocketPalPage() {
       const now = Date.now();
       const petDisplayName = pet.petName;
       
-      // --- Below 20% ---
       const below20Key = `criticalNotificationState_below20_${user.uid}_${pet.id}`;
       let below20State: { lastSentTimestamp: number | null } = 
         JSON.parse(typeof window !== 'undefined' ? localStorage.getItem(below20Key) || '{"lastSentTimestamp":null}' : '{"lastSentTimestamp":null}');
@@ -712,12 +717,11 @@ export default function PocketPalPage() {
         }
       } else {
         if (below20State.lastSentTimestamp !== null && (pet.hunger >= 30 && pet.happiness >= 30 && pet.cleanliness >= 30)) {
-            below20State.lastSentTimestamp = null; // Reset if recovered
+            below20State.lastSentTimestamp = null; 
             if (typeof window !== 'undefined') localStorage.setItem(below20Key, JSON.stringify(below20State));
         }
       }
 
-      // --- Below 10% ---
       const below10Key = `criticalNotificationState_below10_${user.uid}_${pet.id}`;
       let below10State: {
         firstSentTimestamp: number | null;
@@ -743,7 +747,7 @@ export default function PocketPalPage() {
         }
       } else {
         if (below10State.firstSentTimestamp !== null && (pet.hunger >= 15 && pet.happiness >= 15 && pet.cleanliness >= 15)) {
-            below10State.firstSentTimestamp = null; // Reset if recovered
+            below10State.firstSentTimestamp = null; 
             below10State.secondSentTimestamp = null;
             if (typeof window !== 'undefined') localStorage.setItem(below10Key, JSON.stringify(below10State));
         }
@@ -772,6 +776,7 @@ export default function PocketPalPage() {
           hunger: updatedPetData.hunger,
           happiness: updatedPetData.happiness,
           cleanliness: updatedPetData.cleanliness,
+          // lastUpdated will be set by saveSinglePetData
         });
         return updatedPetData;
       })
@@ -829,7 +834,7 @@ export default function PocketPalPage() {
     if (petSpecificActionState && petSpecificActionState.lastPerformedDate === todayStr) {
         newCountToday = petSpecificActionState.countToday + 1;
     } else {
-        newCountToday = 1; // First action of the day (or ever for this action)
+        newCountToday = 1; 
     }
 
     const newActionStates = {
@@ -845,7 +850,11 @@ export default function PocketPalPage() {
         p.id === activePetId ? { ...p, happiness: newHappiness, actionStates: newActionStates } : p
       )
     );
-    saveSinglePetData(currentActivePet.id, { happiness: newHappiness, actionStates: newActionStates });
+    saveSinglePetData(currentActivePet.id, { 
+        happiness: newHappiness, 
+        actionStates: newActionStates 
+        // lastUpdated will be set by saveSinglePetData
+    });
 
     const feedbackMessage = choiceKey === 'yes' 
       ? `You chose "${option.text}" for "${actionDefinition.question}" ${currentPetDisplayName} ${option.happinessChange >= 0 ? 'liked that!' : 'disliked that.'}`
@@ -884,7 +893,7 @@ export default function PocketPalPage() {
       hunger: INITIAL_HUNGER,
       happiness: INITIAL_HAPPINESS,
       cleanliness: INITIAL_CLEANLINESS,
-      lastUpdated: Timestamp.now(),
+      lastUpdated: Timestamp.now(), // Set initial lastUpdated
       actionStates: {},
     };
 
@@ -898,10 +907,7 @@ export default function PocketPalPage() {
     } catch (error) {
       console.error("Error creating new pet:", error);
       toast({ title: "Adoption Failed", description: "Could not create your new pet.", variant: "destructive" });
-    } finally {
-        // setIsPetDataLoading will be set to false by the onSnapshot listener
-        // when the new pet is detected and list is updated.
-    }
+    } 
   };
   
   const handleAuthSubmit = async (e: FormEvent) => {
@@ -969,7 +975,6 @@ export default function PocketPalPage() {
 
         {!user ? (
           <CardContent className="p-4 sm:p-6 flex flex-col space-y-4 sm:space-y-6">
-            {/* Removed pet display from auth screen */}
             <div className="w-full mt-4">
               <form onSubmit={handleAuthSubmit} className="space-y-3 sm:space-y-4">
                 <CardTitle className="text-lg sm:text-xl font-bold text-center mb-2">
@@ -1178,5 +1183,7 @@ export default function PocketPalPage() {
     </div>
   );
 }
+
+    
 
     
